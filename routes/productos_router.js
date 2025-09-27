@@ -16,8 +16,8 @@ import {
 import { verifyToken, verifyRole } from "../middleware/auth.js";
 
 // Validaciones
+import { validate } from "../middleware/validation.js";
 import {
-  validate,
   productosSchemas,
   validateProductoId,
   validateCodigoBarras,

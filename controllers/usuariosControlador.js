@@ -1,10 +1,8 @@
 import bcrypt from "bcryptjs";
 import { sequelize } from "../config/database.js";
-import initModels from "../models/init-models.js";
+import db from "../models/index.js";
 
-// Inicializar modelos
-const models = initModels(sequelize);
-const { usuarios } = models;
+const { usuarios } = db;
 
 // Obtener todos los usuarios con filtros y paginación
 const obtenerUsuarios = async (req, res) => {

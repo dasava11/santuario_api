@@ -72,7 +72,7 @@ const obtenerProductos = async (req, res) => {
         include: [
           {
             model: categorias,
-            as: "categorias",
+            as: "categoria",
             attributes: ["id", "nombre"],
           },
         ],
@@ -105,17 +105,29 @@ const obtenerProductos = async (req, res) => {
   }
 };
 
-// Obtener producto por ID
+// Obtener producto por ID (con cache)
 const obtenerProductoPorId = async (req, res) => {
   try {
     const { id } = req.params;
+    const cacheKey = `producto:id:${id}`;
 
+    // 1. Intentar leer desde cache
+    const cached = await cacheGet(cacheKey);
+    if (cached) {
+      return res.json({
+        success: true,
+        data: cached,
+        cache: true, // útil para debug
+      });
+    }
+
+    // 2. Consultar DB
     const producto = await productos.findOne({
       where: { id },
       include: [
         {
           model: categorias,
-          as: "categorium",
+          as: "categoria", // alias correcto según tu modelo
           attributes: ["id", "nombre"],
         },
       ],
@@ -128,9 +140,13 @@ const obtenerProductoPorId = async (req, res) => {
       });
     }
 
+    // 3. Guardar en cache (TTL 5 minutos)
+    await cacheSet(cacheKey, producto, 300);
+
     res.json({
       success: true,
       data: producto,
+      cache: false,
     });
   } catch (error) {
     console.error("Error obteniendo producto:", error);
@@ -148,25 +164,53 @@ const obtenerProductoPorCodigoBarras = async (req, res) => {
     const { codigo } = req.params;
     const cacheKey = `producto:barcode:${codigo}`;
 
-    // 1. Intentar cache
+    // 1. Intentar leer desde cache
     const cached = await cacheGet(cacheKey);
     if (cached) {
-      return res.json({ success: true, data: cached, cache: true });
+      return res.json({
+        success: true,
+        data: cached,
+        cache: true, // útil para debug
+      });
     }
 
     // 2. Consultar DB
-    const producto = await productos.findOne({ ... });
+    const producto = await productos.findOne({
+      where: {
+        codigo_barras: codigo,
+        activo: true,
+      },
+      include: [
+        {
+          model: categorias,
+          as: "categoria",
+          attributes: ["id", "nombre"],
+        },
+      ],
+    });
 
     if (!producto) {
-      return res.status(404).json({ success: false, error: "No encontrado" });
+      return res.status(404).json({
+        success: false,
+        error: "Producto no encontrado con este código de barras",
+      });
     }
 
-    // 3. Guardar en cache
-    await cacheSet(cacheKey, producto);
+    // 3. Guardar en cache por 5 minutos
+    await cacheSet(cacheKey, producto, 300);
 
-    res.json({ success: true, data: producto, cache: false });
+    res.json({
+      success: true,
+      data: producto,
+      cache: false,
+    });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error("Error buscando producto por código de barras:", error);
+    res.status(500).json({
+      success: false,
+      error: "Error buscando producto",
+      message: error.message,
+    });
   }
 };
 
@@ -187,7 +231,7 @@ const obtenerProductosStockBajo = async (req, res) => {
       include: [
         {
           model: categorias,
-          as: "categorium",
+          as: "categoria",
           attributes: ["id", "nombre"],
         },
       ],
@@ -312,6 +356,7 @@ const crearProducto = async (req, res) => {
       success: true,
       message: `${nombre.trim()} fue creado con éxito`,
       data: { id: nuevoProducto.id },
+      warning: req.body._warning || null,
     });
   } catch (error) {
     await transaction.rollback();
@@ -447,6 +492,15 @@ const eliminarProducto = async (req, res) => {
     }
 
     await producto.update({ activo: false });
+
+    // 🔹 Invalidar cache
+    const cacheKeyId = `producto:id:${id}`;
+    const cacheKeyBarcode = producto.codigo_barras
+      ? `producto:barcode:${producto.codigo_barras}`
+      : null;
+
+    await redisClient.del(cacheKeyId);
+    if (cacheKeyBarcode) await redisClient.del(cacheKeyBarcode);
 
     res.json({
       success: true,

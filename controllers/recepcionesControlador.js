@@ -1,9 +1,7 @@
 import { sequelize } from "../config/database.js";
-import initModels from "../models/init-models.js";
 import { Op } from "sequelize";
+import db from "../models/index.js";
 
-// Inicializar modelos
-const models = initModels(sequelize);
 const {
   recepciones,
   detalle_recepciones,
@@ -11,7 +9,7 @@ const {
   usuarios,
   productos,
   movimientos_inventario,
-} = models;
+} = db;
 
 // Obtener todas las recepciones
 const obtenerRecepciones = async (req, res) => {

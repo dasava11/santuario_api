@@ -1,9 +1,7 @@
 import { sequelize } from "../config/database.js";
-import initModels from "../models/init-models.js";
+import db from "../models/index.js";
 
-// Inicializar modelos
-const models = initModels(sequelize);
-const { proveedores } = models;
+const { proveedores } = db;
 
 // Obtener todos los proveedores con filtros y paginación
 const obtenerProveedores = async (req, res) => {

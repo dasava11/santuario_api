@@ -1,11 +1,9 @@
 import { sequelize } from "../config/database.js";
-import initModels from "../models/init-models.js";
 import { Op, fn, col } from "sequelize";
+import db from "../models/index.js";
 
-// Inicializar modelos
-const models = initModels(sequelize);
 const { ventas, detalle_ventas, usuarios, productos, movimientos_inventario } =
-  models;
+  db;
 
 // Obtener todas las ventas con filtros y paginación
 const obtenerVentas = async (req, res) => {

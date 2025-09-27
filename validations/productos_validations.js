@@ -1,27 +1,5 @@
 import Joi from "joi";
 
-// Middleware para validación
-export const validate = (schema) => {
-  return (req, res, next) => {
-    const { error } = schema.validate(req.body, { abortEarly: false });
-
-    if (error) {
-      const errors = error.details.map((detail) => ({
-        field: detail.path.join("."),
-        message: detail.message,
-      }));
-
-      return res.status(400).json({
-        success: false,
-        error: "Datos de entrada inválidos",
-        details: errors,
-      });
-    }
-
-    next();
-  };
-};
-
 // Esquemas de validación para productos
 export const productosSchemas = {
   // Validación para crear producto
@@ -92,9 +70,9 @@ export const productosSchemas = {
         return helpers.error("custom.precioVentaInvalido");
       }
 
-      // Validación: Si no hay stock, no puede estar activo
+      // 🚨 Solo agregamos un warning si está activo sin stock
       if (value.stock_actual === 0 && value.activo === true) {
-        return helpers.error("custom.stockVacioActivo");
+        value._warning = "Producto activo creado sin stock";
       }
 
       return value;

@@ -109,7 +109,7 @@ export default (sequelize) => {
   // ASOCIACIONES
   productos.associate = (models) => {
     productos.belongsTo(models.categorias, {
-      as: "categorias",
+      as: "categoria",
       foreignKey: "categoria_id",
     });
     productos.hasMany(models.detalle_recepciones, {

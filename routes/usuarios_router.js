@@ -352,7 +352,7 @@ router.put(
  *       200:
  *         description: Usuario desactivado exitosamente
  *       400:
- *         description: No permitido (ej: auto-desactivación)
+ *         description: "No permitido (ej: auto-desactivación)"
  *       404:
  *         description: Usuario no encontrado
  */
