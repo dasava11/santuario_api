@@ -1,58 +1,71 @@
-const mysql = require('mysql2/promise');
-require('dotenv').config();
+import { Sequelize } from "sequelize";
+import mysql from "mysql2/promise";
+import dotenv from "dotenv";
+import config from "./config.js";
 
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'supermercado_db',
-  port: process.env.DB_PORT || 3306,
+dotenv.config();
+
+// Detectar el entorno actual
+const env = process.env.NODE_ENV || "development";
+const dbConfig = config[env];
+
+// === Instancia Sequelize ===
+const sequelize = new Sequelize(
+  dbConfig.database,
+  dbConfig.username,
+  dbConfig.password,
+  {
+    host: dbConfig.host,
+    port: dbConfig.port,
+    dialect: dbConfig.dialect,
+    define: {
+      timestamps: true,
+    },
+    pool: {
+      max: 5,
+      min: 0,
+      acquire: 30000,
+      idle: 10000,
+    },
+    logging: env === "development" ? console.log : false,
+  }
+);
+
+// === Pool mysql2 para consultas raw ===
+const pool = mysql.createPool({
+  host: dbConfig.host,
+  user: dbConfig.username,
+  password: dbConfig.password,
+  database: dbConfig.database,
+  port: dbConfig.port,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  timezone: '0:00'
-};
+  timezone: "local",
+});
 
-const pool = mysql.createPool(dbConfig);
-
-// Función para probar la conexión
-async function testConnection() {
-  try {
-    const connection = await pool.getConnection();
-    console.log('✅ Conexión a MySQL establecida correctamente');
-    connection.release();
-    return true;
-  } catch (error) {
-    console.error('❌ Error conectando a MySQL:', error.message);
-    console.error('Verifica que MySQL esté ejecutándose y que las credenciales sean correctas');
-    return false;
-  }
-}
-
-// Función para ejecutar consultas
+// === Funciones auxiliares ===
 async function executeQuery(sql, params = []) {
   try {
     const [results] = await pool.execute(sql, params);
     return results;
   } catch (error) {
-    console.error('Error ejecutando consulta:', error);
+    console.error("❌ Error ejecutando consulta:", error);
     throw error;
   }
 }
 
-// Función para transacciones
 async function executeTransaction(queries) {
   const connection = await pool.getConnection();
-  
   try {
     await connection.beginTransaction();
-    
+
     const results = [];
     for (const { sql, params } of queries) {
       const [result] = await connection.execute(sql, params);
       results.push(result);
     }
-    
+
     await connection.commit();
     return results;
   } catch (error) {
@@ -63,12 +76,16 @@ async function executeTransaction(queries) {
   }
 }
 
-// Probar conexión al inicializar
+// === Test conexión Sequelize ===
+async function testConnection() {
+  try {
+    await sequelize.authenticate();
+    console.log(`✅ Conectado a BD [${env}] con Sequelize`);
+  } catch (error) {
+    console.error("❌ Error conexión Sequelize:", error.message);
+  }
+}
+
 testConnection();
 
-module.exports = {
-  pool,
-  executeQuery,
-  executeTransaction,
-  testConnection
-};
+export { sequelize, pool, executeQuery, executeTransaction };
