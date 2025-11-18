@@ -1,254 +1,179 @@
-import Joi from "joi";
+// validations/authValidations.js - Refactorizado: Sin Validaciones Duplicadas
 
-// Middleware para validación
-export const validate = (schema) => {
-  return (req, res, next) => {
-    const { error } = schema.validate(req.body, { abortEarly: false });
+import { validate, validateSource } from "../middleware/validation.js";
+import {
+  loginSchema,
+  cambiarPasswordSchema,
+  actualizarPerfilSchema,
+  sessionValidationSchema,
+  authSchemas,
+} from "./schemas/authSchemas.js";
+import {
+  cacheGet,
+  generateSimpleCacheKey,
+  CACHE_PREFIXES,
+} from "../services/cacheService.js";
 
-    if (error) {
-      const errors = error.details.map((detail) => ({
-        field: detail.path.join("."),
-        message: detail.message,
-      }));
+// =====================================================
+// MIDDLEWARES ESPECÍFICOS PARA AUTENTICACIÓN
+// =====================================================
 
-      return res.status(400).json({
-        success: false,
-        error: "Datos de entrada inválidos",
-        details: errors,
-      });
+const validateLogin = validate(loginSchema);
+const validateCambiarPassword = validate(cambiarPasswordSchema);
+const validateActualizarPerfil = validate(actualizarPerfilSchema);
+const validateSessionQuery = validateSource(sessionValidationSchema, "query", {
+  abortEarly: false,
+  stripUnknown: true,
+  convert: true,
+  allowUnknown: false,
+});
+
+// =====================================================
+// VALIDACIONES DE NEGOCIO ADICIONALES
+// =====================================================
+
+/**
+ * Validar reglas de negocio del perfil
+ * Solo valida nombres - email se maneja en service
+ * Contraseña se valida completamente en service layer
+ */
+const validateProfileBusinessRules = (req, res, next) => {
+  const { nombre, apellido } = req.body;
+
+  const namePattern = /^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s]+$/;
+
+  if (nombre && !namePattern.test(nombre)) {
+    return res.status(400).json({
+      success: false,
+      error: "El nombre solo puede contener letras y espacios",
+      details: [{ field: "nombre", message: "Formato inválido" }],
+    });
+  }
+
+  if (apellido && !namePattern.test(apellido)) {
+    return res.status(400).json({
+      success: false,
+      error: "El apellido solo puede contener letras y espacios",
+      details: [{ field: "apellido", message: "Formato inválido" }],
+    });
+  }
+
+  next();
+};
+
+/**
+ * Validar límites de intentos de login
+ * Previene ataques de fuerza bruta
+ */
+const validateLoginAttempts = async (req, res, next) => {
+  const { username } = req.body;
+
+  if (!username) return next();
+
+  try {
+    const attemptsKey = generateSimpleCacheKey(
+      CACHE_PREFIXES.AUTH_ATTEMPTS,
+      username.toLowerCase()
+    );
+
+    const attempts = await cacheGet(attemptsKey);
+
+    if (attempts && attempts.count >= 5) {
+      const timeLeft = Math.ceil((attempts.lockUntil - Date.now()) / 1000 / 60);
+
+      if (timeLeft > 0) {
+        return res.status(429).json({
+          success: false,
+          error: "Demasiados intentos de login fallidos",
+          details: [
+            {
+              field: "username",
+              message: `Cuenta bloqueada temporalmente. Intente nuevamente en ${timeLeft} minutos`,
+            },
+          ],
+          retry_after: timeLeft * 60,
+          // Debug info solo en desarrollo
+          ...(process.env.NODE_ENV === "development" && {
+            debug_info: {
+              cache_key_used: attemptsKey,
+              attempts_found: attempts,
+            },
+          }),
+        });
+      }
     }
 
     next();
-  };
+  } catch (error) {
+    console.error("Error validando intentos de login:", error);
+    next(); // Continuar sin validación de intentos en caso de error
+  }
 };
 
-// Esquemas de validación para autenticación
-export const authSchemas = {
-  // Validación para login
-  login: Joi.object({
-    username: Joi.string().alphanum().min(3).max(50).required().messages({
-      "string.alphanum":
-        "El nombre de usuario solo puede contener letras y números",
-      "string.min": "El nombre de usuario debe tener al menos 3 caracteres",
-      "string.max": "El nombre de usuario no puede tener más de 50 caracteres",
-      "any.required": "El nombre de usuario es obligatorio",
-    }),
+// =====================================================
+// MIDDLEWARES COMPUESTOS - SIMPLIFICADOS
+// =====================================================
 
-    password: Joi.string().min(6).max(100).required().messages({
-      "string.min": "La contraseña debe tener al menos 6 caracteres",
-      "string.max": "La contraseña no puede tener más de 100 caracteres",
-      "any.required": "La contraseña es obligatoria",
-    }),
-  }),
+const validateCompleteLogin = [validateLogin];
 
-  // Validación para cambiar contraseña
-  cambiarPassword: Joi.object({
-    password_actual: Joi.string().min(1).max(100).required().messages({
-      "string.min": "La contraseña actual es requerida",
-      "string.max": "La contraseña actual no puede tener más de 100 caracteres",
-      "string.empty": "La contraseña actual no puede estar vacía",
-      "any.required": "La contraseña actual es obligatoria",
-    }),
+// SIMPLIFICADO: Solo validación Joi - fortaleza se maneja en service
+const validateCompleteCambiarPassword = [validateCambiarPassword];
 
-    password_nuevo: Joi.string()
-      .min(8)
-      .max(100)
-      .pattern(new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)"))
-      .required()
-      .messages({
-        "string.min": "La nueva contraseña debe tener al menos 8 caracteres",
-        "string.max":
-          "La nueva contraseña no puede tener más de 100 caracteres",
-        "string.pattern.base":
-          "La nueva contraseña debe contener al menos una minúscula, una mayúscula y un número",
-        "string.empty": "La nueva contraseña no puede estar vacía",
-        "any.required": "La nueva contraseña es obligatoria",
-      }),
+const validateCompleteActualizarPerfil = [
+  validateActualizarPerfil,
+  validateProfileBusinessRules,
+];
 
-    password_confirmacion: Joi.string().required().messages({
-      "string.empty": "La confirmación de contraseña no puede estar vacía",
-      "any.required": "La confirmación de contraseña es obligatoria",
-    }),
-  })
-    .custom((value, helpers) => {
-      // Validación: confirmación debe coincidir con la nueva contraseña
-      if (value.password_confirmacion !== value.password_nuevo) {
-        return helpers.error("custom.passwordNoCoincide");
-      }
+// =====================================================
+// FUNCIÓN DE DEBUGGING (SOLO DESARROLLO)
+// =====================================================
 
-      // Validación: la nueva contraseña debe ser diferente a la actual
-      if (value.password_actual === value.password_nuevo) {
-        return helpers.error("custom.passwordIgual");
-      }
+const debugAuthCacheKeys = async (username) => {
+  if (process.env.NODE_ENV !== "development") return;
 
-      return value;
-    })
-    .messages({
-      "custom.passwordNoCoincide":
-        "La confirmación de contraseña debe coincidir con la nueva contraseña",
-      "custom.passwordIgual":
-        "La nueva contraseña debe ser diferente a la actual",
-    }),
+  try {
+    const usernameNorm = username.toLowerCase();
+    const correctKey = generateSimpleCacheKey(
+      CACHE_PREFIXES.AUTH_ATTEMPTS,
+      usernameNorm
+    );
 
-  // Validación para registro (si se implementa en el futuro)
-  register: Joi.object({
-    username: Joi.string().alphanum().min(3).max(50).required().messages({
-      "string.alphanum":
-        "El nombre de usuario solo puede contener letras y números",
-      "string.min": "El nombre de usuario debe tener al menos 3 caracteres",
-      "string.max": "El nombre de usuario no puede tener más de 50 caracteres",
-      "any.required": "El nombre de usuario es obligatorio",
-    }),
+    console.log(`\nDEBUG: Verificando cache para usuario: ${username}`);
+    console.log(`Clave correcta: ${correctKey}`);
 
-    email: Joi.string().email().max(100).required().messages({
-      "string.email": "El email debe tener un formato válido",
-      "string.max": "El email no puede tener más de 100 caracteres",
-      "any.required": "El email es obligatorio",
-    }),
+    const value = await cacheGet(correctKey);
+    console.log(`Valor encontrado:`, value);
 
-    password: Joi.string()
-      .min(8)
-      .max(100)
-      .pattern(new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)"))
-      .required()
-      .messages({
-        "string.min": "La contraseña debe tener al menos 8 caracteres",
-        "string.max": "La contraseña no puede tener más de 100 caracteres",
-        "string.pattern.base":
-          "La contraseña debe contener al menos una minúscula, una mayúscula y un número",
-        "any.required": "La contraseña es obligatoria",
-      }),
-
-    password_confirmacion: Joi.string()
-      .valid(Joi.ref("password"))
-      .required()
-      .messages({
-        "any.only":
-          "La confirmación de contraseña debe coincidir con la contraseña",
-        "any.required": "La confirmación de contraseña es obligatoria",
-      }),
-
-    nombre: Joi.string().min(2).max(50).required().messages({
-      "string.min": "El nombre debe tener al menos 2 caracteres",
-      "string.max": "El nombre no puede tener más de 50 caracteres",
-      "any.required": "El nombre es obligatorio",
-    }),
-
-    apellido: Joi.string().min(2).max(50).required().messages({
-      "string.min": "El apellido debe tener al menos 2 caracteres",
-      "string.max": "El apellido no puede tener más de 50 caracteres",
-      "any.required": "El apellido es obligatorio",
-    }),
-
-    rol: Joi.string()
-      .valid("administrador", "cajero", "dueño")
-      .default("cajero")
-      .messages({
-        "any.only": 'El rol debe ser "administrador", "cajero" o "dueño"',
-      }),
-
-    activo: Joi.boolean().default(true).messages({
-      "boolean.base": "El campo activo debe ser un valor booleano",
-    }),
-  }),
-
-  // Validación para recuperar contraseña (si se implementa)
-  forgotPassword: Joi.object({
-    email: Joi.string().email().max(100).required().messages({
-      "string.email": "El email debe tener un formato válido",
-      "string.max": "El email no puede tener más de 100 caracteres",
-      "any.required": "El email es obligatorio",
-    }),
-  }),
-
-  // Validación para resetear contraseña (si se implementa)
-  resetPassword: Joi.object({
-    token: Joi.string().min(10).max(500).required().messages({
-      "string.min": "El token debe tener al menos 10 caracteres",
-      "string.max": "El token no puede tener más de 500 caracteres",
-      "any.required": "El token es obligatorio",
-    }),
-
-    password: Joi.string()
-      .min(8)
-      .max(100)
-      .pattern(new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)"))
-      .required()
-      .messages({
-        "string.min": "La contraseña debe tener al menos 8 caracteres",
-        "string.max": "La contraseña no puede tener más de 100 caracteres",
-        "string.pattern.base":
-          "La contraseña debe contener al menos una minúscula, una mayúscula y un número",
-        "any.required": "La contraseña es obligatoria",
-      }),
-
-    password_confirmacion: Joi.string()
-      .valid(Joi.ref("password"))
-      .required()
-      .messages({
-        "any.only":
-          "La confirmación de contraseña debe coincidir con la contraseña",
-        "any.required": "La confirmación de contraseña es obligatoria",
-      }),
-  }),
+    return { key: correctKey, value, exists: !!value };
+  } catch (error) {
+    console.error("Error en debugAuthCacheKeys:", error);
+    return { error: error.message };
+  }
 };
 
-// Middleware específico para validar headers de autorización
-export const validateAuthHeader = (req, res, next) => {
-  const authHeader = req.headers.authorization;
+// =====================================================
+// EXPORTACIONES
+// =====================================================
 
-  if (!authHeader) {
-    return res.status(401).json({
-      success: false,
-      error: "Token de acceso requerido",
-    });
-  }
+export {
+  // Schemas
+  authSchemas,
 
-  if (!authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({
-      success: false,
-      error: "Formato de token inválido. Use 'Bearer <token>'",
-    });
-  }
+  // Middlewares específicos
+  validateLogin,
+  validateCambiarPassword,
+  validateActualizarPerfil,
+  validateSessionQuery,
 
-  const token = authHeader.substring(7);
+  // Middlewares compuestos - SIMPLIFICADOS
+  validateCompleteLogin,
+  validateCompleteCambiarPassword, // AHORA SIN validatePasswordBusinessRules
+  validateCompleteActualizarPerfil,
 
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      error: "Token de acceso requerido",
-    });
-  }
+  // Validaciones de negocio - REDUCIDAS
+  validateProfileBusinessRules,
+  validateLoginAttempts,
 
-  req.token = token;
-  next();
-};
-
-// Middleware de validación para parámetros de usuario (si se necesita)
-export const validateUserId = (req, res, next) => {
-  const schema = Joi.object({
-    id: Joi.number().integer().positive().required().messages({
-      "number.base": "El ID debe ser un número",
-      "number.integer": "El ID debe ser un número entero",
-      "number.positive": "El ID debe ser un número positivo",
-      "any.required": "El ID es obligatorio",
-    }),
-  });
-
-  const { error } = schema.validate(req.params);
-
-  if (error) {
-    const errors = error.details.map((detail) => ({
-      field: detail.path.join("."),
-      message: detail.message,
-    }));
-
-    return res.status(400).json({
-      success: false,
-      error: "ID de usuario inválido",
-      details: errors,
-    });
-  }
-
-  next();
+  // Debugging (solo desarrollo)
+  debugAuthCacheKeys,
 };

@@ -1,4 +1,4 @@
-import { Sequelize } from "sequelize";
+import { Sequelize, Op } from "sequelize";
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
 import config from "./config.js";
@@ -88,4 +88,4 @@ async function testConnection() {
 
 testConnection();
 
-export { sequelize, pool, executeQuery, executeTransaction };
+export { sequelize, pool, executeQuery, executeTransaction, Op };

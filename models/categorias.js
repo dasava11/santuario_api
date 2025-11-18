@@ -13,6 +13,7 @@ export default (sequelize) => {
       nombre: {
         type: DataTypes.STRING(100),
         allowNull: false,
+        unique: true,
       },
       descripcion: {
         type: DataTypes.TEXT,

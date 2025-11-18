@@ -1,260 +1,88 @@
-import Joi from "joi";
+// validations/inventario_validations.js
+import { validate, validateSource } from "../middleware/validation.js";
+import {
+  ajustarInventario,
+  actualizarStock,
+  getMovimientos,
+  getReporteProducto,
+  getEstadisticas,
+  productoId,
+  stockId,
+  inventarioSchemas,
+} from "./schemas/inventarioSchemas.js";
 
-// Middleware para validación
-export const validate = (schema) => {
-  return (req, res, next) => {
-    const { error } = schema.validate(req.body, { abortEarly: false });
+// =====================================================
+// MIDDLEWARES ESPECÍFICOS PARA INVENTARIO
+// =====================================================
 
-    if (error) {
-      const errors = error.details.map((detail) => ({
-        field: detail.path.join("."),
-        message: detail.message,
-      }));
+/**
+ * Validar datos para ajustar inventario
+ * Corrección directa de stock (solo administradores/dueños)
+ */
+const validateAjustarInventario = validate(ajustarInventario);
 
-      return res.status(400).json({
-        success: false,
-        error: "Datos de entrada inválidos",
-        details: errors,
-      });
-    }
+/**
+ * Validar datos para actualizar stock
+ * Movimientos normales de entrada/salida
+ */
+const validateActualizarStock = validate(actualizarStock);
 
-    next();
-  };
-};
+/**
+ * Validar ID de producto en parámetros (producto_id)
+ */
+const validateProductoId = validateSource(productoId, "params");
 
-// Esquemas de validación para inventario
-export const inventarioSchemas = {
-  // Validación para ajustar inventario
-  ajustarInventario: Joi.object({
-    producto_id: Joi.number().integer().positive().required().messages({
-      "number.base": "El ID del producto debe ser un número",
-      "number.integer": "El ID del producto debe ser un número entero",
-      "number.positive": "El ID del producto debe ser un número positivo",
-      "any.required": "El ID del producto es obligatorio",
-    }),
+/**
+ * Validar ID en parámetros (id)
+ */
+const validateStockId = validateSource(stockId, "params");
 
-    nuevo_stock: Joi.number().min(0).precision(3).required().messages({
-      "number.base": "El nuevo stock debe ser un número",
-      "number.min": "El nuevo stock no puede ser negativo",
-      "number.precision": "El nuevo stock no puede tener más de 3 decimales",
-      "any.required": "El nuevo stock es obligatorio",
-    }),
+/**
+ * Validar query parameters para obtener movimientos
+ * Incluye paginación y filtros (producto, tipo, fechas)
+ */
+const validateGetMovimientosQuery = validateSource(getMovimientos, "query", {
+  abortEarly: false,
+  stripUnknown: true,
+  convert: true,
+  allowUnknown: false,
+});
 
-    observaciones: Joi.string().max(1000).allow("", null).default("").messages({
-      "string.max": "Las observaciones no pueden tener más de 1000 caracteres",
-    }),
-  })
-    .custom((value, helpers) => {
-      // Validación personalizada: verificar que el nuevo_stock sea un número válido
-      if (isNaN(parseFloat(value.nuevo_stock))) {
-        return helpers.error("custom.stockInvalido");
-      }
-
-      // Validar que el nuevo stock no sea extremadamente alto (más de 1 millón)
-      if (parseFloat(value.nuevo_stock) > 1000000) {
-        return helpers.error("custom.stockMuyAlto");
-      }
-
-      return value;
-    })
-    .messages({
-      "custom.stockInvalido": "El nuevo stock debe ser un número válido",
-      "custom.stockMuyAlto": "El nuevo stock no puede ser mayor a 1,000,000",
-    }),
-
-  // Validación para crear movimiento manual (si se implementa)
-  crearMovimiento: Joi.object({
-    producto_id: Joi.number().integer().positive().required().messages({
-      "number.base": "El ID del producto debe ser un número",
-      "number.integer": "El ID del producto debe ser un número entero",
-      "number.positive": "El ID del producto debe ser un número positivo",
-      "any.required": "El ID del producto es obligatorio",
-    }),
-
-    tipo_movimiento: Joi.string()
-      .valid("entrada", "salida", "ajuste")
-      .required()
-      .messages({
-        "any.only":
-          'El tipo de movimiento debe ser "entrada", "salida" o "ajuste"',
-        "any.required": "El tipo de movimiento es obligatorio",
-      }),
-
-    cantidad: Joi.number().positive().precision(3).required().messages({
-      "number.base": "La cantidad debe ser un número",
-      "number.positive": "La cantidad debe ser un número positivo",
-      "number.precision": "La cantidad no puede tener más de 3 decimales",
-      "any.required": "La cantidad es obligatoria",
-    }),
-
-    referencia_tipo: Joi.string()
-      .valid("venta", "recepcion", "ajuste", "devolucion")
-      .default("ajuste")
-      .messages({
-        "any.only":
-          'El tipo de referencia debe ser "venta", "recepcion", "ajuste" o "devolucion"',
-      }),
-
-    referencia_id: Joi.number().integer().positive().allow(null).messages({
-      "number.base": "El ID de referencia debe ser un número",
-      "number.integer": "El ID de referencia debe ser un número entero",
-      "number.positive": "El ID de referencia debe ser un número positivo",
-    }),
-
-    observaciones: Joi.string().max(1000).allow("", null).default("").messages({
-      "string.max": "Las observaciones no pueden tener más de 1000 caracteres",
-    }),
-  }),
-};
-
-// Middleware de validación para parámetros de ID de producto
-export const validateProductoId = (req, res, next) => {
-  const schema = Joi.object({
-    producto_id: Joi.number().integer().positive().required().messages({
-      "number.base": "El ID del producto debe ser un número",
-      "number.integer": "El ID del producto debe ser un número entero",
-      "number.positive": "El ID del producto debe ser un número positivo",
-      "any.required": "El ID del producto es obligatorio",
-    }),
-  });
-
-  const { error } = schema.validate(req.params);
-
-  if (error) {
-    const errors = error.details.map((detail) => ({
-      field: detail.path.join("."),
-      message: detail.message,
-    }));
-
-    return res.status(400).json({
-      success: false,
-      error: "ID de producto inválido",
-      details: errors,
-    });
+/**
+ * Validar query parameters para reporte por producto
+ * Incluye fechas y límite
+ */
+const validateGetReporteProductoQuery = validateSource(
+  getReporteProducto,
+  "query",
+  {
+    abortEarly: false,
+    stripUnknown: true,
+    convert: true,
+    allowUnknown: false,
   }
+);
 
-  next();
-};
+/**
+ * Validar query parameters para estadísticas
+ * Incluye período en días
+ */
+const validateGetEstadisticasQuery = validateSource(getEstadisticas, "query", {
+  abortEarly: false,
+  stripUnknown: true,
+  convert: true,
+  allowUnknown: false,
+});
 
-// Middleware de validación para query parameters de movimientos
-export const validateMovimientosQuery = (req, res, next) => {
-  const schema = Joi.object({
-    producto_id: Joi.number().integer().positive().messages({
-      "number.base": "El ID del producto debe ser un número",
-      "number.integer": "El ID del producto debe ser un número entero",
-      "number.positive": "El ID del producto debe ser un número positivo",
-    }),
+// =====================================================
+// MIDDLEWARES DE VALIDACIÓN DE NEGOCIO
+// =====================================================
 
-    tipo_movimiento: Joi.string()
-      .valid("entrada", "salida", "ajuste")
-      .messages({
-        "any.only":
-          'El tipo de movimiento debe ser "entrada", "salida" o "ajuste"',
-      }),
-
-    fecha_inicio: Joi.date().iso().messages({
-      "date.base": "La fecha de inicio debe ser una fecha válida",
-      "date.format": "La fecha de inicio debe tener formato ISO (YYYY-MM-DD)",
-    }),
-
-    fecha_fin: Joi.date().iso().min(Joi.ref("fecha_inicio")).messages({
-      "date.base": "La fecha de fin debe ser una fecha válida",
-      "date.format": "La fecha de fin debe tener formato ISO (YYYY-MM-DD)",
-      "date.min":
-        "La fecha de fin debe ser posterior o igual a la fecha de inicio",
-    }),
-
-    page: Joi.number().integer().min(1).default(1).messages({
-      "number.base": "La página debe ser un número",
-      "number.integer": "La página debe ser un número entero",
-      "number.min": "La página debe ser mayor a 0",
-    }),
-
-    limit: Joi.number().integer().min(1).max(200).default(50).messages({
-      "number.base": "El límite debe ser un número",
-      "number.integer": "El límite debe ser un número entero",
-      "number.min": "El límite debe ser mayor a 0",
-      "number.max": "El límite no puede ser mayor a 200",
-    }),
-  })
-    .with("fecha_inicio", "fecha_fin")
-    .with("fecha_fin", "fecha_inicio")
-    .messages({
-      "object.with":
-        "Si especifica fecha_inicio, también debe especificar fecha_fin y viceversa",
-    });
-
-  const { error, value } = schema.validate(req.query);
-
-  if (error) {
-    const errors = error.details.map((detail) => ({
-      field: detail.path.join("."),
-      message: detail.message,
-    }));
-
-    return res.status(400).json({
-      success: false,
-      error: "Parámetros de consulta inválidos",
-      details: errors,
-    });
-  }
-
-  // Asignar valores validados y con defaults
-  req.query = value;
-  next();
-};
-
-// Middleware de validación para query parameters de reporte por producto
-export const validateReporteProductoQuery = (req, res, next) => {
-  const schema = Joi.object({
-    fecha_inicio: Joi.date().iso().messages({
-      "date.base": "La fecha de inicio debe ser una fecha válida",
-      "date.format": "La fecha de inicio debe tener formato ISO (YYYY-MM-DD)",
-    }),
-
-    fecha_fin: Joi.date().iso().min(Joi.ref("fecha_inicio")).messages({
-      "date.base": "La fecha de fin debe ser una fecha válida",
-      "date.format": "La fecha de fin debe tener formato ISO (YYYY-MM-DD)",
-      "date.min":
-        "La fecha de fin debe ser posterior o igual a la fecha de inicio",
-    }),
-
-    limit: Joi.number().integer().min(1).max(1000).default(100).messages({
-      "number.base": "El límite debe ser un número",
-      "number.integer": "El límite debe ser un número entero",
-      "number.min": "El límite debe ser mayor a 0",
-      "number.max": "El límite no puede ser mayor a 1000",
-    }),
-  })
-    .with("fecha_inicio", "fecha_fin")
-    .with("fecha_fin", "fecha_inicio")
-    .messages({
-      "object.with":
-        "Si especifica fecha_inicio, también debe especificar fecha_fin y viceversa",
-    });
-
-  const { error, value } = schema.validate(req.query);
-
-  if (error) {
-    const errors = error.details.map((detail) => ({
-      field: detail.path.join("."),
-      message: detail.message,
-    }));
-
-    return res.status(400).json({
-      success: false,
-      error: "Parámetros de consulta inválidos",
-      details: errors,
-    });
-  }
-
-  // Asignar valores validados y con defaults
-  req.query = value;
-  next();
-};
-
-// Validación para rangos de fechas válidos
-export const validateDateRange = (req, res, next) => {
+/**
+ * Middleware para validar rangos de fechas
+ * Evita fechas futuras y rangos mayores a 1 año
+ */
+const validateDateRange = (req, res, next) => {
   const { fecha_inicio, fecha_fin } = req.query;
 
   if (fecha_inicio && fecha_fin) {
@@ -267,15 +95,24 @@ export const validateDateRange = (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: "Las fechas no pueden ser futuras",
+        details: {
+          fecha_inicio: fecha_inicio,
+          fecha_fin: fecha_fin,
+          fecha_actual: hoy.toISOString().split("T")[0],
+        },
       });
     }
 
     // Validar que el rango no sea mayor a 1 año
-    const unAño = 365 * 24 * 60 * 60 * 1000; // milliseconds
-    if (fin - inicio > unAño) {
+    const unAnio = 365 * 24 * 60 * 60 * 1000;
+    if (fin - inicio > unAnio) {
       return res.status(400).json({
         success: false,
         error: "El rango de fechas no puede ser mayor a 1 año",
+        details: {
+          dias_solicitados: Math.ceil((fin - inicio) / (24 * 60 * 60 * 1000)),
+          maximo_permitido: 365,
+        },
       });
     }
   }
@@ -283,17 +120,60 @@ export const validateDateRange = (req, res, next) => {
   next();
 };
 
-// Validación para verificar permisos de ajuste de inventario
-export const validateInventoryAdjustmentPermissions = (req, res, next) => {
-  const userRole = req.user.rol;
-  const allowedRoles = ["administrador", "dueño"];
+// =====================================================
+// MIDDLEWARES COMPUESTOS (OPCIONAL)
+// =====================================================
 
-  if (!allowedRoles.includes(userRole)) {
-    return res.status(403).json({
-      success: false,
-      error: "No tienes permisos para realizar ajustes de inventario",
-    });
-  }
+/**
+ * Middleware compuesto para ajuste de inventario completo
+ */
+const validateCompleteInventoryAdjustment = [validateAjustarInventario];
 
-  next();
+/**
+ * Middleware compuesto para actualización de stock completa
+ */
+const validateCompleteStockUpdate = [validateStockId, validateActualizarStock];
+
+/**
+ * Middleware compuesto para consulta de movimientos con validación de fechas
+ */
+const validateCompleteMovimientosQuery = [
+  validateGetMovimientosQuery,
+  validateDateRange,
+];
+
+/**
+ * Middleware compuesto para reporte por producto con validación de fechas
+ */
+const validateCompleteReporteProducto = [
+  validateProductoId,
+  validateGetReporteProductoQuery,
+  validateDateRange,
+];
+
+// =====================================================
+// EXPORTACIONES LIMPIAS
+// =====================================================
+
+export {
+  // Schemas (para uso directo si necesario)
+  inventarioSchemas,
+
+  // Middlewares específicos listos para rutas
+  validateAjustarInventario,
+  validateActualizarStock,
+  validateProductoId,
+  validateStockId,
+  validateGetMovimientosQuery,
+  validateGetReporteProductoQuery,
+  validateGetEstadisticasQuery,
+
+  // Middlewares de validación de negocio
+  validateDateRange,
+
+  // Middlewares compuestos (opcional para rutas complejas)
+  validateCompleteInventoryAdjustment,
+  validateCompleteStockUpdate,
+  validateCompleteMovimientosQuery,
+  validateCompleteReporteProducto,
 };

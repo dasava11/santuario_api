@@ -111,13 +111,16 @@ async function startServer() {
     await db.sequelize.authenticate();
     console.log("✅ Conectado correctamente a la base de datos");
 
-    // Opcional: reset DB en desarrollo
+    // Determinar modo de sincronización
     if (process.env.FORCE_DB_RESET === "true") {
       await db.sequelize.sync({ force: true });
-      console.log("⚠️ Base de datos reiniciada con éxito");
+      console.log("⚠️ Base de datos reiniciada con éxito (modo FORCE)");
+    } else if (process.env.ALTER_DB_SCHEMA === "true") {
+      await db.sequelize.sync({ alter: true });
+      console.log("🔧 Esquema de base de datos actualizado (modo ALTER)");
     } else {
       await db.sequelize.sync();
-      console.log("📌 Base de datos sincronizada");
+      console.log("📌 Base de datos sincronizada (modo normal)");
     }
 
     app.listen(PORT, () => {

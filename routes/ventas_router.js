@@ -1,3 +1,4 @@
+// routes/ventas.js - Router Refactorizado
 import express from "express";
 
 // Controladores
@@ -9,254 +10,27 @@ import {
   obtenerResumenVentas,
 } from "../controllers/ventasControlador.js";
 
-// Middlewares
+// Middlewares de autenticación
 import { verifyToken, verifyRole } from "../middleware/auth.js";
 
-// Validaciones
+// Middleware de sanitización
+import { sanitizeSearch } from "../middleware/sanitizeSearch.js";
+
+// Validaciones específicas
 import {
-  validate,
-  ventasSchemas,
+  validateCreateVenta,
   validateVentaId,
   validateVentasQuery,
   validateResumenQuery,
-} from "../validations/ventas_validations.js";
+  validateAnularVenta,
+  validateProductosBusinessRules,
+} from "../validations/ventasValidations.js";
 
 const router = express.Router();
 
-/**
- * @swagger
- * components:
- *   securitySchemes:
- *     bearerAuth:
- *       type: http
- *       scheme: bearer
- *       bearerFormat: JWT
- *
- *   schemas:
- *     Venta:
- *       type: object
- *       properties:
- *         id:
- *           type: integer
- *           example: 1
- *         numero_venta:
- *           type: string
- *           example: "V20250920-1695123456789"
- *         fecha_venta:
- *           type: string
- *           format: date-time
- *           example: "2025-09-20T14:30:00Z"
- *         usuario_id:
- *           type: integer
- *           example: 10
- *         total:
- *           type: number
- *           format: float
- *           example: 1250.75
- *         metodo_pago:
- *           type: string
- *           enum: [efectivo, tarjeta, transferencia]
- *           example: "efectivo"
- *         usuario:
- *           type: object
- *           properties:
- *             id:
- *               type: integer
- *               example: 10
- *             nombre:
- *               type: string
- *               example: "Juan"
- *             apellido:
- *               type: string
- *               example: "Pérez"
- *         detalle_venta:
- *           type: array
- *           items:
- *             $ref: '#/components/schemas/DetalleVenta'
- *
- *     DetalleVenta:
- *       type: object
- *       properties:
- *         id:
- *           type: integer
- *           example: 1
- *         venta_id:
- *           type: integer
- *           example: 1
- *         producto_id:
- *           type: integer
- *           example: 5
- *         cantidad:
- *           type: number
- *           format: float
- *           example: 2.500
- *         precio_unitario:
- *           type: number
- *           format: float
- *           example: 120.50
- *         subtotal:
- *           type: number
- *           format: float
- *           example: 301.25
- *         producto:
- *           type: object
- *           properties:
- *             id:
- *               type: integer
- *               example: 5
- *             nombre:
- *               type: string
- *               example: "Laptop Dell"
- *             codigo_barras:
- *               type: string
- *               example: "LP-2025-DL"
- *
- *     VentaCreate:
- *       type: object
- *       required:
- *         - productos
- *       properties:
- *         metodo_pago:
- *           type: string
- *           enum: [efectivo, tarjeta, transferencia]
- *           default: "efectivo"
- *           example: "efectivo"
- *         productos:
- *           type: array
- *           minItems: 1
- *           items:
- *             type: object
- *             required: [producto_id, cantidad]
- *             properties:
- *               producto_id:
- *                 type: integer
- *                 example: 5
- *               cantidad:
- *                 type: number
- *                 format: float
- *                 example: 2.500
- *               precio_unitario:
- *                 type: number
- *                 format: float
- *                 example: 120.50
- *                 description: "Opcional - si no se proporciona, se usa el precio del producto"
- *
- *     VentasListResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *           example: true
- *         data:
- *           type: object
- *           properties:
- *             ventas:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Venta'
- *             pagination:
- *               type: object
- *               properties:
- *                 page:
- *                   type: integer
- *                   example: 1
- *                 limit:
- *                   type: integer
- *                   example: 20
- *                 total:
- *                   type: integer
- *                   example: 150
- *                 pages:
- *                   type: integer
- *                   example: 8
- *
- *     VentaResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *           example: true
- *         data:
- *           $ref: '#/components/schemas/Venta'
- *
- *     ResumenVentasResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *           example: true
- *         data:
- *           type: object
- *           properties:
- *             fecha_inicio:
- *               type: string
- *               format: date
- *               example: "2025-09-20"
- *             fecha_fin:
- *               type: string
- *               format: date
- *               example: "2025-09-20"
- *             total_ventas:
- *               type: object
- *               properties:
- *                 cantidad_ventas:
- *                   type: integer
- *                   example: 25
- *                 total_ventas:
- *                   type: number
- *                   example: 15750.50
- *             ventas_por_metodo:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   metodo_pago:
- *                     type: string
- *                     example: "efectivo"
- *                   cantidad:
- *                     type: integer
- *                     example: 15
- *                   total:
- *                     type: number
- *                     example: 8500.25
- *             productos_mas_vendidos:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   cantidad_vendida:
- *                     type: number
- *                     example: 45.5
- *                   total_vendido:
- *                     type: number
- *                     example: 2275.00
- *                   producto:
- *                     type: object
- *                     properties:
- *                       nombre:
- *                         type: string
- *                         example: "Arroz Diana 500g"
- *
- *     ErrorResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *           example: false
- *         error:
- *           type: string
- *           example: "Error obteniendo ventas"
- *         details:
- *           type: array
- *           items:
- *             type: object
- *             properties:
- *               field:
- *                 type: string
- *               message:
- *                 type: string
- */
-
+// =====================================================
+// OBTENER TODAS LAS VENTAS
+// =====================================================
 /**
  * @swagger
  * /ventas:
@@ -271,19 +45,18 @@ const router = express.Router();
  *         schema:
  *           type: string
  *           format: date
- *         description: Fecha de inicio del filtro (YYYY-MM-DD)
- *         example: "2025-09-01"
+ *         description: Fecha de inicio para filtrar (YYYY-MM-DD)
  *       - in: query
  *         name: fecha_fin
  *         schema:
  *           type: string
  *           format: date
- *         description: Fecha fin del filtro (YYYY-MM-DD)
- *         example: "2025-09-30"
+ *         description: Fecha fin para filtrar (YYYY-MM-DD)
  *       - in: query
  *         name: usuario_id
  *         schema:
  *           type: integer
+ *           minimum: 1
  *         description: ID del usuario que realizó la venta
  *       - in: query
  *         name: metodo_pago
@@ -295,37 +68,40 @@ const router = express.Router();
  *         name: page
  *         schema:
  *           type: integer
+ *           minimum: 1
  *           default: 1
  *         description: Número de página
  *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
- *           default: 20
+ *           minimum: 1
  *           maximum: 100
- *         description: Cantidad de registros por página
+ *           default: 20
+ *         description: Límite de resultados por página
  *     responses:
  *       200:
  *         description: Lista de ventas obtenida exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/VentasListResponse'
  *       400:
  *         description: Parámetros de consulta inválidos
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       500:
- *         description: Error interno del servidor
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado
  */
-router.get("/", verifyToken, validateVentasQuery, obtenerVentas);
+router.get(
+  "/",
+  sanitizeSearch({
+    queryFields: ["metodo_pago"],
+    maxLength: 50,
+    removeDangerousChars: true,
+  }),
+  verifyToken,
+  validateVentasQuery,
+  obtenerVentas
+);
 
+// =====================================================
+// RESUMEN DE VENTAS
+// =====================================================
 /**
  * @swagger
  * /ventas/resumen:
@@ -340,86 +116,82 @@ router.get("/", verifyToken, validateVentasQuery, obtenerVentas);
  *         schema:
  *           type: string
  *           format: date
- *         description: Fecha de inicio del resumen (por defecto hoy)
- *         example: "2025-09-20"
+ *         description: Fecha de inicio del resumen (opcional, por defecto hoy)
  *       - in: query
  *         name: fecha_fin
  *         schema:
  *           type: string
  *           format: date
- *         description: Fecha fin del resumen (por defecto igual a fecha_inicio)
- *         example: "2025-09-20"
+ *         description: Fecha fin del resumen (opcional, por defecto igual a fecha_inicio)
  *     responses:
  *       200:
  *         description: Resumen de ventas obtenido exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ResumenVentasResponse'
  *       400:
  *         description: Parámetros de consulta inválidos
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       500:
- *         description: Error interno del servidor
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado
  */
-router.get("/resumen", verifyToken, validateResumenQuery, obtenerResumenVentas);
+router.get(
+  "/resumen",
+  sanitizeSearch({
+    queryFields: [],
+    maxLength: 20,
+    removeDangerousChars: true,
+  }),
+  verifyToken,
+  validateResumenQuery,
+  obtenerResumenVentas
+);
 
+// =====================================================
+// OBTENER VENTA POR ID
+// =====================================================
 /**
  * @swagger
  * /ventas/{id}:
  *   get:
- *     summary: Obtener una venta específica por ID
+ *     summary: Obtener venta por ID
  *     tags: [Ventas]
  *     security:
  *       - bearerAuth: []
  *     parameters:
- *       - name: id
- *         in: path
- *         description: ID único de la venta
+ *       - in: path
+ *         name: id
  *         required: true
  *         schema:
  *           type: integer
- *           example: 1
+ *           minimum: 1
+ *         description: ID de la venta
  *     responses:
  *       200:
- *         description: Venta encontrada exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/VentaResponse'
+ *         description: Venta obtenida exitosamente
  *       400:
  *         description: ID de venta inválido
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       404:
  *         description: Venta no encontrada
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       500:
- *         description: Error interno del servidor
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado
  */
-router.get("/:id", verifyToken, validateVentaId, obtenerVentaPorId);
+router.get(
+  "/:id",
+  sanitizeSearch({
+    paramFields: ["id"],
+    maxLength: 20,
+    removeDangerousChars: true,
+  }),
+  verifyToken,
+  validateVentaId,
+  obtenerVentaPorId
+);
 
+// =====================================================
+// CREAR NUEVA VENTA
+// =====================================================
 /**
  * @swagger
  * /ventas:
  *   post:
- *     summary: Crear una nueva venta
+ *     summary: Crear nueva venta
  *     tags: [Ventas]
  *     security:
  *       - bearerAuth: []
@@ -428,67 +200,69 @@ router.get("/:id", verifyToken, validateVentaId, obtenerVentaPorId);
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/VentaCreate'
- *           example:
- *             metodo_pago: "efectivo"
- *             productos:
- *               - producto_id: 1
- *                 cantidad: 2
- *                 precio_unitario: 15.50
- *               - producto_id: 3
- *                 cantidad: 1.5
+ *             type: object
+ *             required:
+ *               - productos
+ *             properties:
+ *               metodo_pago:
+ *                 type: string
+ *                 enum: [efectivo, tarjeta, transferencia]
+ *                 default: efectivo
+ *                 description: Método de pago utilizado
+ *               productos:
+ *                 type: array
+ *                 minItems: 1
+ *                 items:
+ *                   type: object
+ *                   required:
+ *                     - producto_id
+ *                     - cantidad
+ *                   properties:
+ *                     producto_id:
+ *                       type: integer
+ *                       minimum: 1
+ *                     cantidad:
+ *                       type: number
+ *                       minimum: 0.001
+ *                       maximum: 99999999.999
+ *                     precio_unitario:
+ *                       type: number
+ *                       minimum: 0.01
+ *                       maximum: 99999999.99
+ *                       description: Opcional - si no se proporciona, se usa precio_venta del producto
  *     responses:
  *       201:
  *         description: Venta creada exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Venta registrada exitosamente"
- *                 data:
- *                   type: object
- *                   properties:
- *                     id:
- *                       type: integer
- *                       example: 1
- *                     numero_venta:
- *                       type: string
- *                       example: "V20250920-1695123456789"
- *                     total:
- *                       type: number
- *                       example: 46.50
  *       400:
- *         description: Datos de entrada inválidos o stock insuficiente
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       500:
- *         description: Error interno del servidor
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         description: Errores de validación o stock insuficiente
+ *       401:
+ *         description: No autorizado
+ *       403:
+ *         description: Permisos insuficientes
  */
 router.post(
   "/",
+  sanitizeSearch({
+    bodyFields: [],
+    maxLength: 0,
+    removeDangerousChars: false,
+    escapeWildcards: false,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño", "cajero"]),
-  validate(ventasSchemas.createVenta),
+  validateCreateVenta,
+  validateProductosBusinessRules,
   crearVenta
 );
 
+// =====================================================
+// ANULAR VENTA (ELIMINACIÓN LÓGICA)
+// =====================================================
 /**
  * @swagger
  * /ventas/{id}:
  *   delete:
- *     summary: Eliminar (anular) una venta
+ *     summary: Anular venta (eliminación lógica con reversión de stock)
  *     tags: [Ventas]
  *     security:
  *       - bearerAuth: []
@@ -500,45 +274,113 @@ router.post(
  *         schema:
  *           type: integer
  *           example: 1
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - motivo_anulacion
+ *             properties:
+ *               motivo_anulacion:
+ *                 type: string
+ *                 minLength: 10
+ *                 maxLength: 500
+ *                 description: Motivo de la anulación (mínimo 10 caracteres)
+ *                 example: "Cliente solicitó devolución por producto defectuoso"
  *     responses:
  *       200:
  *         description: Venta anulada exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Venta V20250920-1695123456789 anulada exitosamente y stock revertido"
  *       400:
- *         description: No se puede anular la venta (restricciones de tiempo o negocio)
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         description: No se puede anular la venta (más de 24 horas o ya anulada)
  *       404:
  *         description: Venta no encontrada
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       500:
- *         description: Error interno del servidor
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado
+ *       403:
+ *         description: Permisos insuficientes
  */
 router.delete(
   "/:id",
+  sanitizeSearch({
+    paramFields: ["id"],
+    bodyFields: ["motivo_anulacion"],
+    maxLength: 500,
+    removeDangerousChars: true,
+    escapeWildcards: false,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateVentaId,
+  validateAnularVenta,
   eliminarVenta
 );
+
+// =====================================================
+// SWAGGER COMPONENTS
+// =====================================================
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     Venta:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *           description: ID único de la venta
+ *         numero_venta:
+ *           type: string
+ *           description: Número de venta único
+ *         usuario_id:
+ *           type: integer
+ *           description: ID del usuario que realizó la venta
+ *         total:
+ *           type: number
+ *           format: float
+ *           description: Valor total de la venta
+ *         metodo_pago:
+ *           type: string
+ *           enum: [efectivo, tarjeta, transferencia]
+ *           description: Método de pago utilizado
+ *         estado:
+ *           type: string
+ *           enum: [activa, anulada]
+ *           description: Estado de la venta
+ *         fecha_venta:
+ *           type: string
+ *           format: date-time
+ *           description: Fecha y hora de la venta
+ *         fecha_anulacion:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *           description: Fecha de anulación (si aplica)
+ *         usuario_anulacion_id:
+ *           type: integer
+ *           nullable: true
+ *           description: Usuario que anuló la venta
+ *         motivo_anulacion:
+ *           type: string
+ *           nullable: true
+ *           description: Motivo de la anulación
+ *
+ *     Pagination:
+ *       type: object
+ *       properties:
+ *         page:
+ *           type: integer
+ *           description: Página actual
+ *         limit:
+ *           type: integer
+ *           description: Límite de resultados por página
+ *         total:
+ *           type: integer
+ *           description: Total de registros
+ *         pages:
+ *           type: integer
+ *           description: Total de páginas
+ */
 
 export default router;

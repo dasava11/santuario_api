@@ -1,452 +1,372 @@
-import bcrypt from "bcryptjs";
-import { sequelize } from "../config/database.js";
-import db from "../models/index.js";
+// controllers/usuariosControlador.js
+import usuariosService from "../services/usuariosService.js";
+import {
+  buildSuccessResponse,
+  createControllerLogger,
+  buildOperationMetadata,
+  buildBusinessErrorResponse,
+  generateSuccessMessage,
+  asyncControllerWrapper,
+} from "../utils/controllerResponseUtils.js";
 
-const { usuarios } = db;
+const logger = createControllerLogger("usuarios");
 
-// Obtener todos los usuarios con filtros y paginación
-const obtenerUsuarios = async (req, res) => {
-  try {
-    const { rol, activo, page, limit } = req.query;
+// =====================================================
+// OBTENER USUARIOS
+// =====================================================
+const obtenerUsuarios = asyncControllerWrapper(async (req, res) => {
+  const result = await usuariosService.obtenerUsuariosFiltrados(req.query);
 
-    // Construir filtros dinámicos
-    const where = {};
+  const metadata = buildOperationMetadata("consulta", null, {
+    ...result.metadata,
+    tiempo_consulta_ms: performance.now() - req.startTime,
+  });
 
-    if (activo !== "all") {
-      where.activo = activo === "true";
-    }
-
-    if (rol) {
-      where.rol = rol;
-    }
-
-    // Calcular offset para paginación
-    const offset = (page - 1) * limit;
-
-    // Consulta con paginación
-    const { count, rows: usuariosData } = await usuarios.findAndCountAll({
-      where,
-      attributes: [
-        "id",
-        "username",
-        "email",
-        "nombre",
-        "apellido",
-        "rol",
-        "activo",
-        "fecha_creacion",
-        "fecha_actualizacion",
-      ], // Excluir password
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      order: [
-        ["nombre", "ASC"],
-        ["apellido", "ASC"],
-      ],
-      distinct: true,
-    });
-
-    res.json({
-      success: true,
-      data: {
-        usuarios: usuariosData,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: count,
-          pages: Math.ceil(count / limit),
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Error obteniendo usuarios:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error obteniendo usuarios",
-      message: error.message,
-    });
+  if (result.fromCache) {
+    logger.cache("HIT", "usuarios:list");
+  } else {
+    logger.cache("MISS → SET", "usuarios:list");
   }
-};
 
-// Obtener usuario por ID
-const obtenerUsuarioPorId = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const usuario = await usuarios.findOne({
-      where: { id },
-      attributes: [
-        "id",
-        "username",
-        "email",
-        "nombre",
-        "apellido",
-        "rol",
-        "activo",
-        "fecha_creacion",
-        "fecha_actualizacion",
-      ],
-    });
-
-    if (!usuario) {
-      return res.status(404).json({
-        success: false,
-        error: "Usuario no encontrado",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: usuario,
-    });
-  } catch (error) {
-    console.error("Error obteniendo usuario:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error obteniendo usuario",
-      message: error.message,
-    });
-  }
-};
-
-// Crear nuevo usuario
-const crearUsuario = async (req, res) => {
-  const transaction = await sequelize.transaction();
-
-  try {
-    const { username, password, email, nombre, apellido, rol, activo } =
-      req.body;
-
-    // VALIDACIONES DE BASE DE DATOS
-
-    // Verificar si ya existe un usuario con el mismo username
-    const existingByUsername = await usuarios.findOne({
-      where: { username: username.trim() },
-      transaction,
-    });
-
-    if (existingByUsername) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: `Ya existe un usuario con el nombre de usuario "${username.trim()}"`,
-      });
-    }
-
-    // Verificar si ya existe un usuario con el mismo email
-    const existingByEmail = await usuarios.findOne({
-      where: { email: email.trim().toLowerCase() },
-      transaction,
-    });
-
-    if (existingByEmail) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: `Ya existe un usuario con el email "${email.trim()}"`,
-      });
-    }
-
-    // Encriptar contraseña
-    const saltRounds = 12;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-    // Crear el usuario
-    const nuevoUsuario = await usuarios.create(
+  res.json(
+    buildSuccessResponse(
       {
-        username: username.trim(),
-        password: hashedPassword,
-        email: email.trim().toLowerCase(),
-        nombre: nombre.trim(),
-        apellido: apellido.trim(),
-        rol,
-        activo: activo ?? true,
+        usuarios: result.data,
+        pagination: result.pagination,
       },
-      { transaction }
+      metadata,
+      result.fromCache
+    )
+  );
+}, "consulta de usuarios");
+
+// =====================================================
+// OBTENER USUARIO POR ID
+// =====================================================
+const obtenerUsuarioPorId = asyncControllerWrapper(async (req, res) => {
+  const { id } = req.params;
+  const result = await usuariosService.obtenerUsuarioPorId(id);
+
+  if (!result) {
+    return res
+      .status(404)
+      .json(
+        buildBusinessErrorResponse("Usuario no encontrado", { usuario_id: id })
+      );
+  }
+
+  const metadata = buildOperationMetadata(
+    "consulta_individual",
+    id,
+    result.metadata
+  );
+
+  if (result.fromCache) {
+    logger.cache("HIT", `usuario:${id}`);
+  } else {
+    logger.cache("MISS → SET", `usuario:${id}`);
+  }
+
+  res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+}, "consulta de usuario");
+
+// =====================================================
+// BUSCAR USUARIOS
+// =====================================================
+const buscarUsuarios = asyncControllerWrapper(async (req, res) => {
+  const { termino, limit, incluirInactivos } = req.query;
+
+  const result = await usuariosService.buscarUsuarios(termino, {
+    limit,
+    incluirInactivos: incluirInactivos === "true",
+  });
+
+  const metadata = buildOperationMetadata("busqueda", null, result.metadata);
+
+  if (result.fromCache) {
+    logger.cache("HIT", `usuarios:search:${termino}`);
+  } else {
+    logger.cache("MISS → SET", `usuarios:search:${termino}`);
+  }
+
+  res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+}, "búsqueda de usuarios");
+
+// =====================================================
+// CREAR USUARIO
+// =====================================================
+const crearUsuario = asyncControllerWrapper(async (req, res) => {
+  try {
+    const nuevoUsuario = await usuariosService.crearUsuario(req.body);
+
+    const metadata = buildOperationMetadata("creacion", nuevoUsuario.id);
+
+    logger.business("Usuario creado", {
+      id: nuevoUsuario.id,
+      username: nuevoUsuario.username,
+      rol: nuevoUsuario.rol,
+    });
+
+    const mensaje = generateSuccessMessage(
+      "crear",
+      "Usuario",
+      nuevoUsuario.username
     );
 
-    await transaction.commit();
-
-    res.status(201).json({
-      success: true,
-      message: `Usuario ${username.trim()} creado con éxito`,
-      data: { id: nuevoUsuario.id },
-    });
+    res.status(201).json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          usuario: {
+            id: nuevoUsuario.id,
+            username: nuevoUsuario.username,
+            email: nuevoUsuario.email,
+            nombre: nuevoUsuario.nombre,
+            apellido: nuevoUsuario.apellido,
+            rol: nuevoUsuario.rol,
+            activo: nuevoUsuario.activo,
+          },
+        },
+        metadata
+      )
+    );
   } catch (error) {
-    await transaction.rollback();
-    console.error("Error creando usuario:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error creando usuario",
-      message: error.message,
-    });
-  }
-};
-
-// Actualizar usuario
-const actualizarUsuario = async (req, res) => {
-  const transaction = await sequelize.transaction();
-
-  try {
-    const { id } = req.params;
-    const fieldsToUpdate = { ...req.body };
-
-    // Verificar si el usuario existe
-    const usuario = await usuarios.findByPk(id, { transaction });
-    if (!usuario) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        error: `No se encontró un usuario con el id: ${id}`,
-      });
-    }
-
-    // VALIDACIONES DE BASE DE DATOS
-
-    // Verificar username único (si cambió)
-    if (
-      fieldsToUpdate.username &&
-      fieldsToUpdate.username !== usuario.username
-    ) {
-      const existingByUsername = await usuarios.findOne({
-        where: {
-          username: fieldsToUpdate.username.trim(),
-          id: { [sequelize.Op.ne]: id },
-        },
-        transaction,
-      });
-
-      if (existingByUsername) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          error: `Ya existe un usuario con el nombre "${fieldsToUpdate.username.trim()}"`,
-        });
-      }
-    }
-
-    // Verificar email único (si cambió)
-    if (
-      fieldsToUpdate.email &&
-      fieldsToUpdate.email.toLowerCase() !== usuario.email.toLowerCase()
-    ) {
-      const existingByEmail = await usuarios.findOne({
-        where: {
-          email: fieldsToUpdate.email.trim().toLowerCase(),
-          id: { [sequelize.Op.ne]: id },
-        },
-        transaction,
-      });
-
-      if (existingByEmail) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          error: `Ya existe un usuario con el email "${fieldsToUpdate.email.trim()}"`,
-        });
-      }
-    }
-
-    // Limpiar y preparar campos para actualización
-    if (fieldsToUpdate.username)
-      fieldsToUpdate.username = fieldsToUpdate.username.trim();
-    if (fieldsToUpdate.email)
-      fieldsToUpdate.email = fieldsToUpdate.email.trim().toLowerCase();
-    if (fieldsToUpdate.nombre)
-      fieldsToUpdate.nombre = fieldsToUpdate.nombre.trim();
-    if (fieldsToUpdate.apellido)
-      fieldsToUpdate.apellido = fieldsToUpdate.apellido.trim();
-
-    // Encriptar nueva contraseña si se proporciona
-    if (fieldsToUpdate.password) {
-      const saltRounds = 12;
-      fieldsToUpdate.password = await bcrypt.hash(
-        fieldsToUpdate.password,
-        saltRounds
+    if (error.message.startsWith("USERNAME_EXISTS:")) {
+      const username = error.message.split(":")[1];
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          `Ya existe un usuario con el nombre de usuario "${username}"`,
+          {
+            field: "username",
+            value: username,
+            constraint: "unique",
+          }
+        )
       );
     }
 
-    // Actualizar el usuario
-    await usuario.update(fieldsToUpdate, { transaction });
+    if (error.message.startsWith("EMAIL_EXISTS:")) {
+      const email = error.message.split(":")[1];
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          `Ya existe un usuario con el email "${email}"`,
+          {
+            field: "email",
+            value: email,
+            constraint: "unique",
+          }
+        )
+      );
+    }
 
-    await transaction.commit();
-
-    res.json({
-      success: true,
-      message: `Usuario ${
-        fieldsToUpdate.username || usuario.username
-      } actualizado con éxito`,
-    });
-  } catch (error) {
-    await transaction.rollback();
-    console.error("Error actualizando usuario:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error actualizando usuario",
-      message: error.message,
-    });
+    throw error;
   }
-};
+}, "creación de usuario");
 
-// Desactivar usuario (soft delete)
-const desactivarUsuario = async (req, res) => {
-  const transaction = await sequelize.transaction();
+// =====================================================
+// ACTUALIZAR USUARIO
+// =====================================================
+const actualizarUsuario = asyncControllerWrapper(async (req, res) => {
+  const { id } = req.params;
 
   try {
-    const { id } = req.params;
+    const result = await usuariosService.actualizarUsuario(id, req.body);
 
-    // VALIDACIÓN DE NEGOCIO: No permitir que se desactive a sí mismo
-    if (parseInt(id) === req.user.id) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: "No puedes desactivar tu propia cuenta",
-      });
-    }
-
-    const usuario = await usuarios.findByPk(id, { transaction });
-    if (!usuario) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        error: "Usuario no encontrado",
-      });
-    }
-
-    // Verificar si ya está desactivado
-    if (!usuario.activo) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: "El usuario ya está desactivado",
-      });
-    }
-
-    await usuario.update({ activo: false }, { transaction });
-
-    await transaction.commit();
-
-    res.json({
-      success: true,
-      message: `Usuario ${usuario.username} desactivado exitosamente`,
+    const metadata = buildOperationMetadata("actualizacion", id, {
+      campos_modificados: result.camposModificados,
     });
-  } catch (error) {
-    await transaction.rollback();
-    console.error("Error desactivando usuario:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error desactivando usuario",
-      message: error.message,
+
+    logger.business("Usuario actualizado", {
+      id,
+      campos: result.camposModificados,
     });
-  }
-};
 
-// Activar usuario
-const activarUsuario = async (req, res) => {
-  const transaction = await sequelize.transaction();
-
-  try {
-    const { id } = req.params;
-
-    const usuario = await usuarios.findByPk(id, { transaction });
-    if (!usuario) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        error: "Usuario no encontrado",
-      });
-    }
-
-    // Verificar si ya está activado
-    if (usuario.activo) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: "El usuario ya está activado",
-      });
-    }
-
-    await usuario.update({ activo: true }, { transaction });
-
-    await transaction.commit();
-
-    res.json({
-      success: true,
-      message: `Usuario ${usuario.username} activado exitosamente`,
-    });
-  } catch (error) {
-    await transaction.rollback();
-    console.error("Error activando usuario:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error activando usuario",
-      message: error.message,
-    });
-  }
-};
-
-// Resetear contraseña de usuario (solo para administradores)
-const resetearPassword = async (req, res) => {
-  const transaction = await sequelize.transaction();
-
-  try {
-    const { id } = req.params;
-    const { password_nuevo } = req.body;
-
-    // VALIDACIÓN DE NEGOCIO: No permitir resetear su propia contraseña por esta vía
-    if (parseInt(id) === req.user.id) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error:
-          "Para cambiar tu propia contraseña usa el endpoint /auth/cambiar-password",
-      });
-    }
-
-    const usuario = await usuarios.findByPk(id, { transaction });
-    if (!usuario) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        error: "Usuario no encontrado",
-      });
-    }
-
-    // Encriptar nueva contraseña
-    const saltRounds = 12;
-    const hashedPassword = await bcrypt.hash(password_nuevo, saltRounds);
-
-    await usuario.update(
-      {
-        password: hashedPassword,
-        fecha_actualizacion: new Date(),
-      },
-      { transaction }
+    const mensaje = generateSuccessMessage(
+      "actualizar",
+      "Usuario",
+      req.body.username || result.usuario.username
     );
 
-    await transaction.commit();
-
-    res.json({
-      success: true,
-      message: `Contraseña del usuario ${usuario.username} reseteada exitosamente`,
-    });
+    res.json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          cambios_realizados: result.camposModificados,
+        },
+        metadata
+      )
+    );
   } catch (error) {
-    await transaction.rollback();
-    console.error("Error reseteando contraseña:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error reseteando contraseña",
-      message: error.message,
-    });
-  }
-};
+    if (error.message === "USUARIO_NOT_FOUND") {
+      return res
+        .status(404)
+        .json(
+          buildBusinessErrorResponse(
+            `No se encontró un usuario con el id: ${id}`
+          )
+        );
+    }
 
+    if (error.message.startsWith("USERNAME_EXISTS:")) {
+      const username = error.message.split(":")[1];
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          `Ya existe un usuario con el nombre "${username}"`,
+          {
+            field: "username",
+            value: username,
+          }
+        )
+      );
+    }
+
+    if (error.message.startsWith("EMAIL_EXISTS:")) {
+      const email = error.message.split(":")[1];
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          `Ya existe un usuario con el email "${email}"`,
+          {
+            field: "email",
+            value: email,
+          }
+        )
+      );
+    }
+
+    throw error;
+  }
+}, "actualización de usuario");
+
+// =====================================================
+// TOGGLE ESTADO USUARIO (ACTIVAR/DESACTIVAR)
+// =====================================================
+const toggleEstadoUsuario = asyncControllerWrapper(async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await usuariosService.toggleEstadoUsuario(id, req.user.id);
+
+    const accion = result.estado_nuevo ? "activado" : "desactivado";
+    const metadata = buildOperationMetadata(`toggle_estado_${accion}`, id, {
+      estado_anterior: result.estado_anterior,
+      estado_nuevo: result.estado_nuevo,
+    });
+
+    logger.business(`Usuario ${accion}`, {
+      id,
+      username: result.usuario.username,
+      estado: result.estado_nuevo,
+    });
+
+    const mensaje = generateSuccessMessage(
+      accion === "activado" ? "activar" : "desactivar",
+      "Usuario",
+      result.usuario.username
+    );
+
+    res.json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          usuario: {
+            id: result.usuario.id,
+            username: result.usuario.username,
+            activo: result.usuario.activo,
+          },
+        },
+        metadata
+      )
+    );
+  } catch (error) {
+    if (error.message === "USUARIO_NOT_FOUND") {
+      return res
+        .status(404)
+        .json(buildBusinessErrorResponse("Usuario no encontrado"));
+    }
+
+    if (error.message === "CANNOT_MODIFY_SELF") {
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          "No puedes modificar el estado de tu propia cuenta",
+          {
+            restriction: "self_modification_forbidden",
+          }
+        )
+      );
+    }
+
+    throw error;
+  }
+}, "toggle estado usuario");
+
+// =====================================================
+// RESETEAR CONTRASEÑA
+// =====================================================
+const resetearPassword = asyncControllerWrapper(async (req, res) => {
+  const { id } = req.params;
+  const { password_nuevo } = req.body;
+
+  try {
+    const usuario = await usuariosService.resetearPassword(
+      id,
+      password_nuevo,
+      req.user.id
+    );
+
+    const metadata = buildOperationMetadata("reseteo_password", id, {
+      fecha_reseteo: new Date().toISOString(),
+    });
+
+    logger.business("Contraseña reseteada", {
+      id,
+      username: usuario.username,
+      admin_id: req.user.id,
+    });
+
+    res.json(
+      buildSuccessResponse(
+        {
+          mensaje: `Contraseña del usuario ${usuario.username} reseteada exitosamente`,
+          usuario: {
+            id: usuario.id,
+            username: usuario.username,
+          },
+        },
+        metadata
+      )
+    );
+  } catch (error) {
+    if (error.message === "USUARIO_NOT_FOUND") {
+      return res
+        .status(404)
+        .json(buildBusinessErrorResponse("Usuario no encontrado"));
+    }
+
+    if (error.message === "CANNOT_RESET_SELF") {
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          "Para cambiar tu propia contraseña usa el endpoint /auth/cambiar-password",
+          {
+            restriction: "self_reset_forbidden",
+            alternative_endpoint: "/api/auth/cambiar-password",
+          }
+        )
+      );
+    }
+
+    throw error;
+  }
+}, "reseteo de contraseña");
+
+// =====================================================
+// EXPORTACIONES
+// =====================================================
 export {
   obtenerUsuarios,
   obtenerUsuarioPorId,
+  buscarUsuarios,
   crearUsuario,
   actualizarUsuario,
-  desactivarUsuario,
-  activarUsuario,
+  toggleEstadoUsuario,
   resetearPassword,
 };

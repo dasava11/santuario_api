@@ -1,268 +1,192 @@
-import Joi from "joi";
+// validations/ventas_validations.js - Reutilizando Utils Existentes
+import { validate, validateSource } from "../middleware/validation.js";
+import {
+  createVenta,
+  getVentas,
+  getResumenVentas,
+  ventaId,
+  anularVenta,
+  ventasSchemas,
+} from "./schemas/ventasSchemas.js";
 
-// Middleware para validación
-export const validate = (schema) => {
-  return (req, res, next) => {
-    const { error, value } = schema.validate(req.body, {
-      abortEarly: false,
-      stripUnknown: true,
-      convert: true,
+// =====================================================
+// 🎯 MIDDLEWARES ESPECÍFICOS PARA VENTAS
+// =====================================================
+
+/**
+ * Validar datos para crear venta
+ * Reutiliza el middleware genérico existente
+ */
+const validateCreateVenta = validate(createVenta);
+
+/**
+ * Validar ID de venta en parámetros
+ * Reutiliza validateSource para params
+ */
+const validateVentaId = validateSource(ventaId, "params");
+
+/**
+ * Validar query parameters para obtener ventas
+ * Reutiliza validateSource para query con defaults
+ * Incluye paginación y filtros de búsqueda
+ */
+const validateVentasQuery = validateSource(getVentas, "query", {
+  abortEarly: false,
+  stripUnknown: true,
+  convert: true,
+  allowUnknown: false, // Rechazar parámetros no definidos
+});
+
+/**
+ * Validar query parameters para obtener resumen de ventas
+ * Reutiliza validateSource para query con defaults
+ */
+const validateResumenQuery = validateSource(getResumenVentas, "query", {
+  abortEarly: false,
+  stripUnknown: true,
+  convert: true,
+});
+
+// =====================================================
+// 🔧 MIDDLEWARES COMPUESTOS (OPCIONAL)
+// =====================================================
+
+/**
+ * Middleware compuesto para validar creación completa
+ * Combina validación de datos + sanitización
+ * Ejemplo de uso: router.post("/", validateCompleteVentaCreation, controller)
+ */
+const validateCompleteVentaCreation = [validateCreateVenta];
+
+/**
+ * Middleware compuesto para obtener venta específica
+ * Combina validación de ID
+ */
+const validateGetSpecificVenta = [validateVentaId];
+
+/**
+ * Middleware compuesto para anular venta
+ * Solo necesita validación de ID
+ */
+const validateVentaAnulacion = [validateVentaId];
+
+// =====================================================
+// 📏 VALIDACIONES DE NEGOCIO ADICIONALES (OPCIONAL)
+// =====================================================
+
+/**
+ * Middleware personalizado para validar productos en venta
+ * Valida que no haya productos duplicados
+ */
+const validateProductosBusinessRules = (req, res, next) => {
+  const { productos } = req.body;
+
+  if (!productos || !Array.isArray(productos)) {
+    return next(); // Ya validado por Joi
+  }
+
+  // Regla de negocio: No permitir productos duplicados
+  const productosIds = productos.map((p) => p.producto_id);
+  const productosDuplicados = productosIds.filter(
+    (id, index) => productosIds.indexOf(id) !== index
+  );
+
+  if (productosDuplicados.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: "Regla de negocio violada",
+      details: [
+        {
+          field: "productos",
+          message: `Productos duplicados encontrados: ${productosDuplicados.join(
+            ", "
+          )}`,
+        },
+      ],
     });
+  }
 
-    if (error) {
-      const details = error.details.map((detail) => ({
-        field: detail.path.join("."),
-        message: detail.message,
-      }));
-
-      return res.status(400).json({
-        success: false,
-        error: "Errores de validación",
-        details: details,
-      });
+  // Regla de negocio: Validar que el subtotal calculado sea correcto (si se proporciona)
+  const errores = [];
+  productos.forEach((producto, index) => {
+    if (!producto.precio_unitario) {
+      return; // Se usará precio del producto, validar en service
     }
 
-    // Reemplazar req.body con el valor validado y limpio
-    req.body = value;
-    next();
-  };
-};
-
-// Esquemas de validación para ventas
-export const ventasSchemas = {
-  // Validación para crear venta
-  createVenta: Joi.object({
-    metodo_pago: Joi.string()
-      .valid("efectivo", "tarjeta", "transferencia")
-      .default("efectivo")
-      .messages({
-        "any.only":
-          'El método de pago debe ser "efectivo", "tarjeta" o "transferencia"',
-      }),
-
-    productos: Joi.array()
-      .items(
-        Joi.object({
-          producto_id: Joi.number().integer().positive().required().messages({
-            "number.base": "El ID del producto debe ser un número",
-            "number.integer": "El ID del producto debe ser un número entero",
-            "number.positive": "El ID del producto debe ser un número positivo",
-            "any.required": "El ID del producto es obligatorio",
-          }),
-
-          cantidad: Joi.number()
-            .positive()
-            .precision(3)
-            .max(99999999.999)
-            .required()
-            .messages({
-              "number.base": "La cantidad debe ser un número",
-              "number.positive": "La cantidad debe ser un número positivo",
-              "number.precision":
-                "La cantidad no puede tener más de 3 decimales",
-              "number.max": "La cantidad excede el límite máximo permitido",
-              "any.required": "La cantidad es obligatoria",
-            }),
-
-          precio_unitario: Joi.number()
-            .positive()
-            .precision(2)
-            .max(99999999.99)
-            .optional()
-            .messages({
-              "number.base": "El precio unitario debe ser un número",
-              "number.positive":
-                "El precio unitario debe ser un número positivo",
-              "number.precision":
-                "El precio unitario no puede tener más de 2 decimales",
-              "number.max":
-                "El precio unitario excede el límite máximo permitido",
-            }),
-        })
-      )
-      .min(1)
-      .required()
-      .messages({
-        "array.base": "Los productos deben ser un arreglo",
-        "array.min": "Debe incluir al menos un producto en la venta",
-        "any.required": "Los productos son obligatorios",
-      }),
-  }),
-
-  // Validación para consulta de resumen
-  resumenQuery: Joi.object({
-    fecha_inicio: Joi.date().iso().max("now").optional().messages({
-      "date.base": "La fecha de inicio debe ser una fecha válida",
-      "date.format":
-        "La fecha de inicio debe estar en formato ISO (YYYY-MM-DD)",
-      "date.max": "La fecha de inicio no puede ser posterior a hoy",
-    }),
-
-    fecha_fin: Joi.date()
-      .iso()
-      .max("now")
-      .min(Joi.ref("fecha_inicio"))
-      .optional()
-      .messages({
-        "date.base": "La fecha fin debe ser una fecha válida",
-        "date.format": "La fecha fin debe estar en formato ISO (YYYY-MM-DD)",
-        "date.max": "La fecha fin no puede ser posterior a hoy",
-        "date.min":
-          "La fecha fin debe ser posterior o igual a la fecha de inicio",
-      }),
-  }),
-};
-
-// Middleware de validación específico para parámetros de ID de venta
-export const validateVentaId = (req, res, next) => {
-  const schema = Joi.object({
-    id: Joi.number().integer().positive().required().messages({
-      "number.base": "El ID debe ser un número",
-      "number.integer": "El ID debe ser un número entero",
-      "number.positive": "El ID debe ser un número positivo",
-      "any.required": "El ID es obligatorio",
-    }),
+    // Si proporciona precio_unitario, validar consistencia básica
+    if (producto.precio_unitario <= 0) {
+      errores.push({
+        field: `productos[${index}].precio_unitario`,
+        message: `El precio unitario debe ser mayor a cero`,
+      });
+    }
   });
 
-  const { error } = schema.validate(req.params);
-
-  if (error) {
-    const details = error.details.map((detail) => ({
-      field: detail.path.join("."),
-      message: detail.message,
-    }));
-
+  if (errores.length > 0) {
     return res.status(400).json({
       success: false,
-      error: "ID de venta inválido",
-      details: details,
+      error: "Errores en validación de productos",
+      details: errores,
     });
   }
 
   next();
 };
 
-// Middleware de validación para query parameters de ventas
-export const validateVentasQuery = (req, res, next) => {
-  const schema = Joi.object({
-    fecha_inicio: Joi.date().iso().max("now").default("2000-01-01").messages({
-      "date.base": "La fecha de inicio debe ser una fecha válida",
-      "date.format":
-        "La fecha de inicio debe estar en formato ISO (YYYY-MM-DD)",
-      "date.max": "La fecha de inicio no puede ser posterior a hoy",
-    }),
+/**
+ * Middleware personalizado para validar rango de fechas en consultas
+ * Valida reglas de negocio específicas adicionales
+ */
+const validateDateRangeBusinessRules = (req, res, next) => {
+  const { fecha_inicio, fecha_fin } = req.query;
 
-    fecha_fin: Joi.date()
-      .iso()
-      .max("now")
-      .min(Joi.ref("fecha_inicio"))
-      .default("2100-12-31")
-      .messages({
-        "date.base": "La fecha fin debe ser una fecha válida",
-        "date.format": "La fecha fin debe estar en formato ISO (YYYY-MM-DD)",
-        "date.max": "La fecha fin no puede ser posterior a hoy",
-        "date.min":
-          "La fecha fin debe ser posterior o igual a la fecha de inicio",
-      }),
+  if (!fecha_inicio || !fecha_fin) {
+    return next(); // Ya validado por Joi con defaults
+  }
 
-    usuario_id: Joi.number().integer().positive().optional().messages({
-      "number.base": "El ID del usuario debe ser un número",
-      "number.integer": "El ID del usuario debe ser un número entero",
-      "number.positive": "El ID del usuario debe ser un número positivo",
-    }),
+  const inicio = new Date(fecha_inicio);
+  const fin = new Date(fecha_fin);
 
-    metodo_pago: Joi.string()
-      .valid("efectivo", "tarjeta", "transferencia")
-      .optional()
-      .messages({
-        "any.only":
-          'El método de pago debe ser "efectivo", "tarjeta" o "transferencia"',
-      }),
-
-    page: Joi.number().integer().min(1).default(1).messages({
-      "number.base": "La página debe ser un número",
-      "number.integer": "La página debe ser un número entero",
-      "number.min": "La página debe ser mayor a 0",
-    }),
-
-    limit: Joi.number().integer().min(1).max(100).default(20).messages({
-      "number.base": "El límite debe ser un número",
-      "number.integer": "El límite debe ser un número entero",
-      "number.min": "El límite debe ser mayor a 0",
-      "number.max": "El límite no puede ser mayor a 100",
-    }),
-  });
-
-  const { error, value } = schema.validate(req.query, {
-    stripUnknown: true,
-    convert: true,
-  });
-
-  if (error) {
-    const details = error.details.map((detail) => ({
-      field: detail.path.join("."),
-      message: detail.message,
-    }));
-
+  // Regla de negocio: No permitir rangos mayores a 1 año
+  const unAnoEnMs = 365 * 24 * 60 * 60 * 1000;
+  if (fin - inicio > unAnoEnMs) {
     return res.status(400).json({
       success: false,
-      error: "Parámetros de consulta inválidos",
-      details: details,
+      error: "Regla de negocio violada",
+      details: [
+        {
+          field: "fecha_fin",
+          message:
+            "El rango de fechas no puede ser mayor a 1 año. Use filtros más específicos.",
+        },
+      ],
     });
   }
 
-  // Reemplazar req.query con los valores validados
-  req.query = value;
   next();
 };
 
-// Middleware de validación para query parameters del resumen
-export const validateResumenQuery = (req, res, next) => {
-  const schema = Joi.object({
-    fecha_inicio: Joi.date()
-      .iso()
-      .max("now")
-      .default(new Date().toISOString().split("T")[0])
-      .messages({
-        "date.base": "La fecha de inicio debe ser una fecha válida",
-        "date.format":
-          "La fecha de inicio debe estar en formato ISO (YYYY-MM-DD)",
-        "date.max": "La fecha de inicio no puede ser posterior a hoy",
-      }),
+// =====================================================
+// 📤 EXPORTACIONES LIMPIAS
+// =====================================================
 
-    fecha_fin: Joi.date()
-      .iso()
-      .max("now")
-      .min(Joi.ref("fecha_inicio"))
-      .optional()
-      .messages({
-        "date.base": "La fecha fin debe ser una fecha válida",
-        "date.format": "La fecha fin debe estar en formato ISO (YYYY-MM-DD)",
-        "date.max": "La fecha fin no puede ser posterior a hoy",
-        "date.min":
-          "La fecha fin debe ser posterior o igual a la fecha de inicio",
-      }),
-  });
+export {
+  // Schemas (para uso directo si necesario)
+  ventasSchemas,
 
-  const { error, value } = schema.validate(req.query, {
-    stripUnknown: true,
-    convert: true,
-  });
+  // Middlewares específicos listos para rutas
+  validateCreateVenta,
+  validateVentaId,
+  validateVentasQuery,
+  validateResumenQuery,
+  validateAnularVenta,
 
-  if (error) {
-    const details = error.details.map((detail) => ({
-      field: detail.path.join("."),
-      message: detail.message,
-    }));
+  // Middlewares compuestos (opcional para rutas complejas)
+  validateCompleteVentaCreation,
+  validateGetSpecificVenta,
+  validateVentaAnulacion,
 
-    return res.status(400).json({
-      success: false,
-      error: "Parámetros de consulta inválidos para resumen",
-      details: details,
-    });
-  }
-
-  // Reemplazar req.query con los valores validados
-  req.query = value;
-  next();
+  // Validaciones de negocio adicionales (opcional)
+  validateProductosBusinessRules,
+  validateDateRangeBusinessRules,
 };

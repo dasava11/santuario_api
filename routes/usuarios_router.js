@@ -1,180 +1,38 @@
+// routes/usuarios_router.js
 import express from "express";
 
-// Importar controladores
+// Controladores
 import {
   obtenerUsuarios,
   obtenerUsuarioPorId,
+  buscarUsuarios,
   crearUsuario,
   actualizarUsuario,
-  desactivarUsuario,
-  activarUsuario,
+  toggleEstadoUsuario,
   resetearPassword,
 } from "../controllers/usuariosControlador.js";
 
-// Importar middlewares de autenticación
+// Middlewares de autenticación
 import { verifyToken, verifyRole } from "../middleware/auth.js";
 
-// Importar validaciones
+// Middleware de sanitización
+import { sanitizeSearch } from "../middleware/sanitizeSearch.js";
+
+// Validaciones específicas
 import {
-  validate,
-  usuariosSchemas,
+  validateCreateUsuario,
+  validateUpdateUsuario,
   validateUsuarioId,
-  validateUsuariosQuery,
-  validateNotSelfUser,
+  validateGetUsuariosQuery,
+  validateBuscarUsuariosQuery,
+  validateResetPassword,
 } from "../validations/usuarios_validations.js";
 
 const router = express.Router();
 
-/**
- * @swagger
- * components:
- *   schemas:
- *     Usuario:
- *       type: object
- *       properties:
- *         id:
- *           type: integer
- *           example: 1
- *         username:
- *           type: string
- *           example: "cajero1"
- *         email:
- *           type: string
- *           format: email
- *           example: "cajero1@empresa.com"
- *         nombre:
- *           type: string
- *           example: "María"
- *         apellido:
- *           type: string
- *           example: "González"
- *         rol:
- *           type: string
- *           example: "cajero"
- *         activo:
- *           type: boolean
- *           example: true
- *         fecha_creacion:
- *           type: string
- *           format: date-time
- *         fecha_actualizacion:
- *           type: string
- *           format: date-time
- *
- *     CreateUsuario:
- *       type: object
- *       required:
- *         - username
- *         - password
- *         - password_confirmacion
- *         - email
- *         - nombre
- *         - apellido
- *         - rol
- *       properties:
- *         username:
- *           type: string
- *         password:
- *           type: string
- *         password_confirmacion:
- *           type: string
- *         email:
- *           type: string
- *           format: email
- *         nombre:
- *           type: string
- *         apellido:
- *           type: string
- *         rol:
- *           type: string
- *           enum: [administrador, cajero, dueño]
- *         activo:
- *           type: boolean
- *
- *     UpdateUsuario:
- *       type: object
- *       minProperties: 1
- *       properties:
- *         username:
- *           type: string
- *         password:
- *           type: string
- *         password_confirmacion:
- *           type: string
- *         email:
- *           type: string
- *           format: email
- *         nombre:
- *           type: string
- *         apellido:
- *           type: string
- *         rol:
- *           type: string
- *           enum: [administrador, cajero, dueño]
- *         activo:
- *           type: boolean
- *
- *     ResetPassword:
- *       type: object
- *       required:
- *         - password_nuevo
- *         - password_confirmacion
- *       properties:
- *         password_nuevo:
- *           type: string
- *         password_confirmacion:
- *           type: string
- *
- *     UsuariosListResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *         data:
- *           type: object
- *           properties:
- *             usuarios:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Usuario'
- *             pagination:
- *               type: object
- *               properties:
- *                 page:
- *                   type: integer
- *                 limit:
- *                   type: integer
- *                 total:
- *                   type: integer
- *                 pages:
- *                   type: integer
- *
- *     ErrorResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *           example: false
- *         error:
- *           type: string
- *         details:
- *           type: array
- *           items:
- *             type: object
- *             properties:
- *               field:
- *                 type: string
- *               message:
- *                 type: string
- */
-
-/**
- * @swagger
- * tags:
- *   - name: Usuarios
- *     description: Gestión de usuarios del sistema
- */
-
+// =====================================================
+// 📊 OBTENER TODOS LOS USUARIOS
+// =====================================================
 /**
  * @swagger
  * /usuarios:
@@ -203,6 +61,7 @@ const router = express.Router();
  *           type: integer
  *           minimum: 1
  *           default: 1
+ *         description: Número de página
  *       - in: query
  *         name: limit
  *         schema:
@@ -210,22 +69,86 @@ const router = express.Router();
  *           minimum: 1
  *           maximum: 100
  *           default: 20
+ *         description: Límite de resultados por página
  *     responses:
  *       200:
  *         description: Lista de usuarios obtenida exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/UsuariosListResponse'
+ *       401:
+ *         description: No autorizado
+ *       403:
+ *         description: Permisos insuficientes
  */
 router.get(
   "/",
+  sanitizeSearch({
+    queryFields: ["rol", "activo"],
+    maxLength: 50,
+    removeDangerousChars: true,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
-  validateUsuariosQuery,
+  validateGetUsuariosQuery,
   obtenerUsuarios
 );
 
+// =====================================================
+// 🔍 BUSCAR USUARIOS
+// =====================================================
+/**
+ * @swagger
+ * /usuarios/buscar:
+ *   get:
+ *     summary: Buscar usuarios por término (nombre, apellido, username, email)
+ *     tags: [Usuarios]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: termino
+ *         required: true
+ *         schema:
+ *           type: string
+ *           minLength: 2
+ *           maxLength: 100
+ *         description: Término de búsqueda
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 50
+ *           default: 10
+ *         description: Límite de resultados
+ *       - in: query
+ *         name: incluirInactivos
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: Incluir usuarios inactivos
+ *     responses:
+ *       200:
+ *         description: Resultados de búsqueda obtenidos exitosamente
+ *       400:
+ *         description: Término de búsqueda inválido
+ *       401:
+ *         description: No autorizado
+ */
+router.get(
+  "/buscar",
+  sanitizeSearch({
+    queryFields: ["termino"],
+    maxLength: 100,
+    removeDangerousChars: true,
+  }),
+  verifyToken,
+  verifyRole(["administrador", "dueño"]),
+  validateBuscarUsuariosQuery,
+  buscarUsuarios
+);
+
+// =====================================================
+// 📄 OBTENER USUARIO POR ID
+// =====================================================
 /**
  * @swagger
  * /usuarios/{id}:
@@ -240,31 +163,32 @@ router.get(
  *         required: true
  *         schema:
  *           type: integer
+ *           minimum: 1
  *         description: ID del usuario
  *     responses:
  *       200:
  *         description: Usuario obtenido exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Usuario'
- *       400:
- *         description: ID inválido
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       404:
  *         description: Usuario no encontrado
+ *       401:
+ *         description: No autorizado
  */
 router.get(
   "/:id",
+  sanitizeSearch({
+    paramFields: ["id"],
+    maxLength: 20,
+    removeDangerousChars: true,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateUsuarioId,
   obtenerUsuarioPorId
 );
 
+// =====================================================
+// ✨ CREAR NUEVO USUARIO
+// =====================================================
 /**
  * @swagger
  * /usuarios:
@@ -278,25 +202,77 @@ router.get(
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/CreateUsuario'
+ *             type: object
+ *             required:
+ *               - username
+ *               - password
+ *               - password_confirmacion
+ *               - email
+ *               - nombre
+ *               - apellido
+ *               - rol
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 minLength: 3
+ *                 maxLength: 50
+ *               password:
+ *                 type: string
+ *                 minLength: 8
+ *                 maxLength: 100
+ *               password_confirmacion:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               nombre:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 50
+ *               apellido:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 50
+ *               rol:
+ *                 type: string
+ *                 enum: [administrador, cajero, dueño]
+ *               activo:
+ *                 type: boolean
+ *                 default: true
+ *           example:
+ *             username: "jperez"
+ *             password: "Pass1234"
+ *             password_confirmacion: "Pass1234"
+ *             email: "jperez@example.com"
+ *             nombre: "Juan"
+ *             apellido: "Pérez"
+ *             rol: "cajero"
+ *             activo: true
  *     responses:
  *       201:
  *         description: Usuario creado exitosamente
  *       400:
- *         description: Errores de validación o duplicados
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         description: Errores de validación o usuario duplicado
+ *       401:
+ *         description: No autorizado
  */
 router.post(
   "/",
+  sanitizeSearch({
+    bodyFields: ["username", "email", "nombre", "apellido"],
+    maxLength: 100,
+    removeDangerousChars: true,
+    escapeWildcards: false,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
-  validate(usuariosSchemas.createUsuario),
+  validateCreateUsuario,
   crearUsuario
 );
 
+// =====================================================
+// 🔄 ACTUALIZAR USUARIO
+// =====================================================
 /**
  * @swagger
  * /usuarios/{id}:
@@ -311,34 +287,63 @@ router.post(
  *         required: true
  *         schema:
  *           type: integer
+ *         description: ID del usuario
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/UpdateUsuario'
+ *             type: object
+ *             minProperties: 1
+ *             properties:
+ *               username:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               password_confirmacion:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               nombre:
+ *                 type: string
+ *               apellido:
+ *                 type: string
+ *               rol:
+ *                 type: string
+ *               activo:
+ *                 type: boolean
  *     responses:
  *       200:
  *         description: Usuario actualizado exitosamente
  *       400:
- *         description: Error de validación
+ *         description: Errores de validación
  *       404:
  *         description: Usuario no encontrado
  */
 router.put(
   "/:id",
+  sanitizeSearch({
+    paramFields: ["id"],
+    bodyFields: ["username", "email", "nombre", "apellido"],
+    maxLength: 100,
+    removeDangerousChars: true,
+    escapeWildcards: false,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateUsuarioId,
-  validate(usuariosSchemas.updateUsuario),
+  validateUpdateUsuario,
   actualizarUsuario
 );
 
+// =====================================================
+// 🔀 TOGGLE ESTADO USUARIO (ACTIVAR/DESACTIVAR)
+// =====================================================
 /**
  * @swagger
- * /usuarios/{id}/desactivar:
+ * /usuarios/{id}/toggle-estado:
  *   patch:
- *     summary: Desactivar usuario (soft delete)
+ *     summary: Cambiar estado del usuario (activar/desactivar)
  *     tags: [Usuarios]
  *     security:
  *       - bearerAuth: []
@@ -348,55 +353,35 @@ router.put(
  *         required: true
  *         schema:
  *           type: integer
+ *         description: ID del usuario
  *     responses:
  *       200:
- *         description: Usuario desactivado exitosamente
+ *         description: Estado del usuario cambiado exitosamente
  *       400:
- *         description: "No permitido (ej: auto-desactivación)"
+ *         description: No puede modificar su propia cuenta
  *       404:
  *         description: Usuario no encontrado
  */
 router.patch(
-  "/:id/desactivar",
+  "/:id/toggle-estado",
+  sanitizeSearch({
+    paramFields: ["id"],
+    maxLength: 20,
+    removeDangerousChars: true,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateUsuarioId,
-  validateNotSelfUser,
-  desactivarUsuario
+  toggleEstadoUsuario
 );
 
-/**
- * @swagger
- * /usuarios/{id}/activar:
- *   patch:
- *     summary: Activar usuario
- *     tags: [Usuarios]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Usuario activado exitosamente
- *       404:
- *         description: Usuario no encontrado
- */
-router.patch(
-  "/:id/activar",
-  verifyToken,
-  verifyRole(["administrador", "dueño"]),
-  validateUsuarioId,
-  activarUsuario
-);
-
+// =====================================================
+// 🔑 RESETEAR CONTRASEÑA
+// =====================================================
 /**
  * @swagger
  * /usuarios/{id}/resetear-password:
- *   patch:
+ *   post:
  *     summary: Resetear contraseña de usuario (solo administradores)
  *     tags: [Usuarios]
  *     security:
@@ -407,60 +392,78 @@ router.patch(
  *         required: true
  *         schema:
  *           type: integer
+ *         description: ID del usuario
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/ResetPassword'
+ *             type: object
+ *             required:
+ *               - password_nuevo
+ *               - password_confirmacion
+ *             properties:
+ *               password_nuevo:
+ *                 type: string
+ *                 minLength: 8
+ *               password_confirmacion:
+ *                 type: string
+ *           example:
+ *             password_nuevo: "NewPass1234"
+ *             password_confirmacion: "NewPass1234"
  *     responses:
  *       200:
  *         description: Contraseña reseteada exitosamente
  *       400:
- *         description: Validación fallida o intento de resetear propia contraseña
+ *         description: No puede resetear su propia contraseña
  *       404:
  *         description: Usuario no encontrado
  */
-router.patch(
+router.post(
   "/:id/resetear-password",
+  sanitizeSearch({
+    paramFields: ["id"],
+    maxLength: 20,
+    removeDangerousChars: true,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateUsuarioId,
-  validateNotSelfUser,
-  validate(usuariosSchemas.resetPassword),
+  validateResetPassword,
   resetearPassword
 );
 
+// =====================================================
+// 📋 SWAGGER COMPONENTS
+// =====================================================
 /**
  * @swagger
- * /usuarios/{id}:
- *   delete:
- *     summary: Desactivar usuario (alias para PATCH /desactivar)
- *     description: No elimina físicamente, solo pone activo = false
- *     tags: [Usuarios]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
+ * components:
+ *   schemas:
+ *     Usuario:
+ *       type: object
+ *       properties:
+ *         id:
  *           type: integer
- *     responses:
- *       200:
- *         description: Usuario desactivado exitosamente
- *       400:
- *         description: No permitido desactivar tu propia cuenta
- *       404:
- *         description: Usuario no encontrado
+ *         username:
+ *           type: string
+ *         email:
+ *           type: string
+ *         nombre:
+ *           type: string
+ *         apellido:
+ *           type: string
+ *         rol:
+ *           type: string
+ *           enum: [administrador, cajero, dueño]
+ *         activo:
+ *           type: boolean
+ *         fecha_creacion:
+ *           type: string
+ *           format: date-time
+ *         fecha_actualizacion:
+ *           type: string
+ *           format: date-time
  */
-router.delete(
-  "/:id",
-  verifyToken,
-  verifyRole(["administrador", "dueño"]),
-  validateUsuarioId,
-  validateNotSelfUser,
-  desactivarUsuario
-);
 
 export default router;

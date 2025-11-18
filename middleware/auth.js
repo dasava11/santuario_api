@@ -1,5 +1,11 @@
+// /middleware/auth.js
+
 import jwt from "jsonwebtoken";
 import { executeQuery } from "../config/database.js";
+
+// =====================================================
+// 🛡️ MIDDLEWARES DE AUTENTICACIÓN
+// =====================================================
 
 // Middleware para verificar JWT
 const verifyToken = async (req, res, next) => {

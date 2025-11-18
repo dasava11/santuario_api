@@ -1,215 +1,36 @@
+// routes/proveedores.js - Router Refactorizado con Sanitización
 import express from "express";
 
-// Importar controladores (funciones individuales)
+// Controladores
 import {
   obtenerProveedores,
   obtenerProveedorPorId,
   crearProveedor,
   actualizarProveedor,
   eliminarProveedor,
+  obtenerEstadisticasProveedores,
 } from "../controllers/proveedoresControlador.js";
 
-// Importar middlewares de autenticación
+// Middlewares de autenticación
 import { verifyToken, verifyRole } from "../middleware/auth.js";
 
-// Importar validaciones
+// Middleware de sanitización
+import { sanitizeSearch } from "../middleware/sanitizeSearch.js";
+
+// Validaciones específicas
 import {
-  validate,
-  proveedoresSchemas,
+  validateCreateProveedor,
+  validateUpdateProveedor,
   validateProveedorId,
-  validateProveedoresQuery,
+  validateGetProveedoresQuery,
+  validateGetProveedorByIdQuery,
 } from "../validations/proveedores_validations.js";
 
 const router = express.Router();
 
-/**
- * @swagger
- * components:
- *   schemas:
- *     Proveedor:
- *       type: object
- *       required:
- *         - nombre
- *       properties:
- *         id:
- *           type: integer
- *           description: ID único del proveedor
- *         nombre:
- *           type: string
- *           minLength: 2
- *           maxLength: 200
- *           description: Nombre del proveedor
- *         contacto:
- *           type: string
- *           maxLength: 200
- *           description: Persona de contacto
- *           nullable: true
- *         telefono:
- *           type: string
- *           maxLength: 20
- *           description: Número de teléfono
- *           nullable: true
- *         email:
- *           type: string
- *           format: email
- *           maxLength: 255
- *           description: Correo electrónico
- *           nullable: true
- *         direccion:
- *           type: string
- *           maxLength: 500
- *           description: Dirección física
- *           nullable: true
- *         ciudad:
- *           type: string
- *           maxLength: 100
- *           description: Ciudad
- *           nullable: true
- *         pais:
- *           type: string
- *           maxLength: 100
- *           description: País
- *           nullable: true
- *         activo:
- *           type: boolean
- *           default: true
- *           description: Estado del proveedor
- *         fecha_creacion:
- *           type: string
- *           format: date-time
- *           description: Fecha de creación
- *         fecha_actualizacion:
- *           type: string
- *           format: date-time
- *           description: Fecha de última actualización
- *
- *
- *     ProveedorCreate:
- *       type: object
- *       required:
- *         - nombre
- *       properties:
- *         nombre:
- *           type: string
- *           minLength: 2
- *           maxLength: 200
- *         contacto:
- *           type: string
- *           maxLength: 200
- *           nullable: true
- *         telefono:
- *           type: string
- *           maxLength: 20
- *           nullable: true
- *         email:
- *           type: string
- *           format: email
- *           maxLength: 255
- *           nullable: true
- *         direccion:
- *           type: string
- *           maxLength: 500
- *           nullable: true
- *         ciudad:
- *           type: string
- *           maxLength: 100
- *           nullable: true
- *         pais:
- *           type: string
- *           maxLength: 100
- *           nullable: true
- *         activo:
- *           type: boolean
- *           default: true
- *
- *     ProveedorUpdate:
- *       type: object
- *       minProperties: 1
- *       properties:
- *         nombre:
- *           type: string
- *           minLength: 2
- *           maxLength: 200
- *         contacto:
- *           type: string
- *           maxLength: 200
- *           nullable: true
- *         telefono:
- *           type: string
- *           maxLength: 20
- *           nullable: true
- *         email:
- *           type: string
- *           format: email
- *           maxLength: 255
- *           nullable: true
- *         direccion:
- *           type: string
- *           maxLength: 500
- *           nullable: true
- *         ciudad:
- *           type: string
- *           maxLength: 100
- *           nullable: true
- *         pais:
- *           type: string
- *           maxLength: 100
- *           nullable: true
- *         activo:
- *           type: boolean
- *
- *
- *     ProveedorResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *         data:
- *           $ref: '#/components/schemas/Proveedor'
- *
- *     ProveedoresListResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *         data:
- *           type: object
- *           properties:
- *             proveedores:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Proveedor'
- *             pagination:
- *               type: object
- *               properties:
- *                 page:
- *                   type: integer
- *                 limit:
- *                   type: integer
- *                 total:
- *                   type: integer
- *                 pages:
- *                   type: integer
- *
- *     ErrorResponse:
- *       type: object
- *       properties:
- *         success:
- *           type: boolean
- *           example: false
- *         error:
- *           type: string
- *         details:
- *           type: array
- *           items:
- *             type: object
- *             properties:
- *               field:
- *                 type: string
- *               message:
- *                 type: string
- */
-
+// =====================================================
+// 📊 OBTENER TODOS LOS PROVEEDORES
+// =====================================================
 /**
  * @swagger
  * /proveedores:
@@ -247,26 +68,101 @@ const router = express.Router();
  *           maximum: 100
  *           default: 20
  *         description: Límite de resultados por página
+ *       - in: query
+ *         name: incluir_estadisticas
+ *         schema:
+ *           type: string
+ *           enum: [true, false]
+ *           default: "false"
+ *         description: Incluir estadísticas de recepciones
  *     responses:
  *       200:
  *         description: Lista de proveedores obtenida exitosamente
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/ProveedoresListResponse'
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     proveedores:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Proveedor'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/Pagination'
  *       400:
  *         description: Parámetros de consulta inválidos
+ *       401:
+ *         description: No autorizado
+ */
+router.get(
+  "/",
+  sanitizeSearch({
+    queryFields: ["search", "activo", "incluir_estadisticas"],
+    maxLength: 200,
+    removeDangerousChars: true,
+  }),
+  verifyToken,
+  validateGetProveedoresQuery,
+  obtenerProveedores
+);
+
+// =====================================================
+// 📊 ESTADÍSTICAS DE PROVEEDORES
+// =====================================================
+/**
+ * @swagger
+ * /proveedores/estadisticas:
+ *   get:
+ *     summary: Obtener estadísticas completas de proveedores
+ *     tags: [Proveedores]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Estadísticas obtenidas exitosamente
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     por_proveedor:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     totales:
+ *                       type: object
+ *                       properties:
+ *                         proveedores_activos:
+ *                           type: integer
+ *                         proveedores_inactivos:
+ *                           type: integer
+ *                         valor_total_compras:
+ *                           type: number
  *       401:
  *         description: No autorizado
- *       500:
- *         description: Error interno del servidor
+ *       403:
+ *         description: Permisos insuficientes
  */
-router.get("/", verifyToken, validateProveedoresQuery, obtenerProveedores);
+router.get(
+  "/estadisticas",
+  verifyToken,
+  verifyRole(["administrador", "dueño"]),
+  obtenerEstadisticasProveedores
+);
 
+// =====================================================
+// 📄 OBTENER PROVEEDOR POR ID
+// =====================================================
 /**
  * @swagger
  * /proveedores/{id}:
@@ -283,24 +179,49 @@ router.get("/", verifyToken, validateProveedoresQuery, obtenerProveedores);
  *           type: integer
  *           minimum: 1
  *         description: ID del proveedor
+ *       - in: query
+ *         name: incluir_recepciones
+ *         schema:
+ *           type: string
+ *           enum: [true, false]
+ *           default: "false"
+ *         description: Incluir recepciones asociadas
  *     responses:
  *       200:
  *         description: Proveedor obtenido exitosamente
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/ProveedorResponse'
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   $ref: '#/components/schemas/Proveedor'
  *       400:
  *         description: ID de proveedor inválido
  *       404:
  *         description: Proveedor no encontrado
  *       401:
  *         description: No autorizado
- *       500:
- *         description: Error interno del servidor
  */
-router.get("/:id", verifyToken, validateProveedorId, obtenerProveedorPorId);
+router.get(
+  "/:id",
+  sanitizeSearch({
+    paramFields: ["id"],
+    queryFields: ["incluir_recepciones"],
+    maxLength: 50,
+    removeDangerousChars: true,
+  }),
+  verifyToken,
+  validateProveedorId,
+  validateGetProveedorByIdQuery,
+  obtenerProveedorPorId
+);
 
+// =====================================================
+// ✨ CREAR NUEVO PROVEEDOR
+// =====================================================
 /**
  * @swagger
  * /proveedores:
@@ -314,7 +235,45 @@ router.get("/:id", verifyToken, validateProveedorId, obtenerProveedorPorId);
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/ProveedorCreate'
+ *             type: object
+ *             required:
+ *               - nombre
+ *             properties:
+ *               nombre:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 200
+ *                 description: Nombre del proveedor
+ *               contacto:
+ *                 type: string
+ *                 maxLength: 100
+ *                 description: Persona de contacto
+ *               telefono:
+ *                 type: string
+ *                 maxLength: 20
+ *                 description: Número de teléfono
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 maxLength: 100
+ *                 description: Correo electrónico
+ *               direccion:
+ *                 type: string
+ *                 maxLength: 500
+ *                 description: Dirección física
+ *               ciudad:
+ *                 type: string
+ *                 maxLength: 100
+ *                 description: Ciudad
+ *               pais:
+ *                 type: string
+ *                 maxLength: 100
+ *                 default: "Colombia"
+ *                 description: País
+ *               activo:
+ *                 type: boolean
+ *                 default: true
+ *                 description: Estado del proveedor
  *           example:
  *             nombre: "Distribuidora ABC"
  *             contacto: "Juan Pérez"
@@ -334,33 +293,45 @@ router.get("/:id", verifyToken, validateProveedorId, obtenerProveedorPorId);
  *               properties:
  *                 success:
  *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Distribuidora ABC fue creado con éxito"
  *                 data:
  *                   type: object
  *                   properties:
- *                     id:
- *                       type: integer
- *                       example: 123
+ *                     mensaje:
+ *                       type: string
+ *                     proveedor:
+ *                       $ref: '#/components/schemas/Proveedor'
  *       400:
- *         description: Errores de validación o reglas de negocio
+ *         description: Errores de validación o proveedor duplicado
  *       401:
  *         description: No autorizado
  *       403:
  *         description: Permisos insuficientes
- *       500:
- *         description: Error interno del servidor
  */
 router.post(
   "/",
+  sanitizeSearch({
+    bodyFields: [
+      "nombre",
+      "contacto",
+      "telefono",
+      "email",
+      "direccion",
+      "ciudad",
+      "pais",
+    ],
+    maxLength: 500,
+    removeDangerousChars: true,
+    escapeWildcards: false,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
-  validate(proveedoresSchemas.createProveedor),
+  validateCreateProveedor,
   crearProveedor
 );
 
+// =====================================================
+// 🔄 ACTUALIZAR PROVEEDOR
+// =====================================================
 /**
  * @swagger
  * /proveedores/{id}:
@@ -382,7 +353,42 @@ router.post(
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/ProveedorUpdate'
+ *             type: object
+ *             minProperties: 1
+ *             properties:
+ *               nombre:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 200
+ *                 description: Nombre del proveedor
+ *               contacto:
+ *                 type: string
+ *                 maxLength: 100
+ *                 description: Persona de contacto
+ *               telefono:
+ *                 type: string
+ *                 maxLength: 20
+ *                 description: Número de teléfono
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 maxLength: 100
+ *                 description: Correo electrónico
+ *               direccion:
+ *                 type: string
+ *                 maxLength: 500
+ *                 description: Dirección física
+ *               ciudad:
+ *                 type: string
+ *                 maxLength: 100
+ *                 description: Ciudad
+ *               pais:
+ *                 type: string
+ *                 maxLength: 100
+ *                 description: País
+ *               activo:
+ *                 type: boolean
+ *                 description: Estado del proveedor
  *           example:
  *             nombre: "Distribuidora ABC Actualizada"
  *             telefono: "+57 301 987 6543"
@@ -397,30 +403,51 @@ router.post(
  *               properties:
  *                 success:
  *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Distribuidora ABC Actualizada fue actualizado con  éxito"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     mensaje:
+ *                       type: string
+ *                     cambios_realizados:
+ *                       type: array
+ *                       items:
+ *                         type: string
  *       400:
- *         description: Errores de validación o reglas de negocio
+ *         description: Errores de validación o nombre duplicado
  *       404:
  *         description: Proveedor no encontrado
  *       401:
  *         description: No autorizado
  *       403:
  *         description: Permisos insuficientes
- *       500:
- *         description: Error interno del servidor
  */
 router.put(
   "/:id",
+  sanitizeSearch({
+    paramFields: ["id"],
+    bodyFields: [
+      "nombre",
+      "contacto",
+      "telefono",
+      "email",
+      "direccion",
+      "ciudad",
+      "pais",
+    ],
+    maxLength: 500,
+    removeDangerousChars: true,
+    escapeWildcards: false,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateProveedorId,
-  validate(proveedoresSchemas.updateProveedor),
+  validateUpdateProveedor,
   actualizarProveedor
 );
 
+// =====================================================
+// 🗑️ ELIMINAR (DESACTIVAR) PROVEEDOR
+// =====================================================
 /**
  * @swagger
  * /proveedores/{id}:
@@ -447,27 +474,126 @@ router.put(
  *               properties:
  *                 success:
  *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Proveedor desactivado exitosamente"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     mensaje:
+ *                       type: string
+ *                     proveedor:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                         nombre:
+ *                           type: string
  *       400:
- *         description: ID de proveedor inválido
+ *         description: ID inválido o proveedor con recepciones activas
  *       404:
  *         description: Proveedor no encontrado
  *       401:
  *         description: No autorizado
  *       403:
  *         description: Permisos insuficientes
- *       500:
- *         description: Error interno del servidor
  */
 router.delete(
   "/:id",
+  sanitizeSearch({
+    paramFields: ["id"],
+    maxLength: 20,
+    removeDangerousChars: true,
+  }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateProveedorId,
   eliminarProveedor
 );
+
+// =====================================================
+// 📋 SWAGGER COMPONENTS
+// =====================================================
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     Proveedor:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *           description: ID único del proveedor
+ *         nombre:
+ *           type: string
+ *           description: Nombre del proveedor
+ *         contacto:
+ *           type: string
+ *           nullable: true
+ *           description: Persona de contacto
+ *         telefono:
+ *           type: string
+ *           nullable: true
+ *           description: Número de teléfono
+ *         email:
+ *           type: string
+ *           nullable: true
+ *           description: Correo electrónico
+ *         direccion:
+ *           type: string
+ *           nullable: true
+ *           description: Dirección física
+ *         ciudad:
+ *           type: string
+ *           nullable: true
+ *           description: Ciudad
+ *         pais:
+ *           type: string
+ *           nullable: true
+ *           description: País
+ *         activo:
+ *           type: boolean
+ *           description: Estado del proveedor
+ *         fecha_creacion:
+ *           type: string
+ *           format: date-time
+ *           description: Fecha de creación
+ *         fecha_actualizacion:
+ *           type: string
+ *           format: date-time
+ *           description: Fecha de última actualización
+ *
+ *     Pagination:
+ *       type: object
+ *       properties:
+ *         page:
+ *           type: integer
+ *           description: Página actual
+ *         limit:
+ *           type: integer
+ *           description: Límite de resultados por página
+ *         total:
+ *           type: integer
+ *           description: Total de registros
+ *         pages:
+ *           type: integer
+ *           description: Total de páginas
+ *
+ *     ErrorResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: false
+ *         error:
+ *           type: object
+ *           properties:
+ *             message:
+ *               type: string
+ *             code:
+ *               type: integer
+ *             timestamp:
+ *               type: string
+ *               format: date-time
+ *             details:
+ *               type: object
+ */
 
 export default router;

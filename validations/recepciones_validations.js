@@ -1,141 +1,135 @@
-import Joi from "joi";
+// validations/recepciones_validations.js - Reutilizando Utils Existentes
+import { validate, validateSource } from "../middleware/validation.js";
+import {
+  createRecepcion,
+  updateRecepcion,
+  getRecepciones,
+  getRecepcionById,
+  recepcionId,
+  procesarRecepcion,
+  recepcionesSchemas,
+} from "./schemas/recepcionesSchemas.js";
 
-// Esquemas de validación para recepciones
-const recepcionesSchemas = {
-  // Validación para crear recepción
-  createRecepcion: Joi.object({
-    numero_factura: Joi.string().trim().min(1).max(100).required().messages({
-      "string.base": "El número de factura debe ser una cadena de texto",
-      "string.empty": "El número de factura es obligatorio",
-      "string.max": "El número de factura no puede exceder los 100 caracteres",
-      "any.required": "El número de factura es obligatorio",
-    }),
+// =====================================================
+// 🎯 MIDDLEWARES ESPECÍFICOS PARA RECEPCIONES
+// =====================================================
 
-    proveedor_id: Joi.number().integer().positive().required().messages({
-      "number.base": "El ID del proveedor debe ser un número",
-      "number.integer": "El ID del proveedor debe ser un número entero",
-      "number.positive": "El ID del proveedor debe ser un número positivo",
-      "any.required": "El ID del proveedor es obligatorio",
-    }),
+/**
+ * Validar datos para crear recepción
+ * Reutiliza el middleware genérico existente
+ */
+const validateCreateRecepcion = validate(createRecepcion);
 
-    fecha_recepcion: Joi.date().iso().max("now").required().messages({
-      "date.base": "La fecha de recepción debe ser una fecha válida",
-      "date.format":
-        "La fecha de recepción debe estar en formato ISO (YYYY-MM-DD)",
-      "date.max": "La fecha de recepción no puede ser posterior a hoy",
-      "any.required": "La fecha de recepción es obligatoria",
-    }),
+/**
+ * Validar datos para actualizar recepción
+ * Reutiliza el middleware genérico existente
+ */
+const validateUpdateRecepcion = validate(updateRecepcion);
 
-    observaciones: Joi.string()
-      .trim()
-      .max(1000)
-      .allow(null, "")
-      .optional()
-      .messages({
-        "string.base": "Las observaciones deben ser una cadena de texto",
-        "string.max": "Las observaciones no pueden exceder los 1000 caracteres",
-      }),
+/**
+ * Validar ID de recepción en parámetros
+ * Reutiliza validateSource para params
+ */
+const validateRecepcionId = validateSource(recepcionId, "params");
 
-    productos: Joi.array()
-      .items(
-        Joi.object({
-          producto_id: Joi.number().integer().positive().required().messages({
-            "number.base": "El ID del producto debe ser un número",
-            "number.integer": "El ID del producto debe ser un número entero",
-            "number.positive": "El ID del producto debe ser un número positivo",
-            "any.required": "El ID del producto es obligatorio",
-          }),
+/**
+ * Validar query parameters para obtener recepciones
+ * Reutiliza validateSource para query con defaults
+ * Incluye paginación y filtros de búsqueda
+ */
+const validateGetRecepcionesQuery = validateSource(getRecepciones, "query", {
+  abortEarly: false,
+  stripUnknown: true,
+  convert: true,
+  allowUnknown: false, // Rechazar parámetros no definidos
+});
 
-          cantidad: Joi.number()
-            .positive()
-            .precision(3)
-            .max(99999999.999)
-            .required()
-            .messages({
-              "number.base": "La cantidad debe ser un número",
-              "number.positive": "La cantidad debe ser un número positivo",
-              "number.precision":
-                "La cantidad no puede tener más de 3 decimales",
-              "number.max": "La cantidad excede el límite máximo permitido",
-              "any.required": "La cantidad es obligatoria",
-            }),
+/**
+ * Validar query parameters para obtener recepción por ID
+ * Reutiliza validateSource para query con defaults
+ */
+const validateGetRecepcionByIdQuery = validateSource(getRecepcionById, "query");
 
-          precio_unitario: Joi.number()
-            .positive()
-            .precision(2)
-            .max(99999999.99)
-            .required()
-            .messages({
-              "number.base": "El precio unitario debe ser un número",
-              "number.positive":
-                "El precio unitario debe ser un número positivo",
-              "number.precision":
-                "El precio unitario no puede tener más de 2 decimales",
-              "number.max":
-                "El precio unitario excede el límite máximo permitido",
-              "any.required": "El precio unitario es obligatorio",
-            }),
-        })
-      )
-      .min(1)
-      .required()
-      .messages({
-        "array.base": "Los productos deben ser un arreglo",
-        "array.min": "Debe incluir al menos un producto",
-        "any.required": "Los productos son obligatorios",
-      }),
-  }),
-};
+/**
+ * Validar datos para procesar recepción
+ * Permite parámetros adicionales específicos del procesamiento
+ */
+const validateProcesarRecepcion = validate(procesarRecepcion);
 
-// Middleware genérico para validar con Joi
-const validate = (schema) => {
-  return (req, res, next) => {
-    const { error, value } = schema.validate(req.body, {
-      abortEarly: false, // Retorna todos los errores, no solo el primero
-      stripUnknown: true, // Remueve propiedades no definidas en el schema
-      convert: true, // Convierte tipos cuando es posible
-    });
+// =====================================================
+// 🔧 MIDDLEWARES COMPUESTOS (OPCIONAL)
+// =====================================================
 
-    if (error) {
-      const details = error.details.map((detail) => ({
-        field: detail.path.join("."),
-        message: detail.message,
-      }));
+/**
+ * Middleware compuesto para validar creación completa
+ * Combina validación de datos + sanitización
+ * Ejemplo de uso: router.post("/", validateCompleteRecepcionCreation, controller)
+ */
+const validateCompleteRecepcionCreation = [validateCreateRecepcion];
 
-      return res.status(400).json({
-        success: false,
-        error: "Errores de validación",
-        details,
-      });
-    }
+/**
+ * Middleware compuesto para validar actualización completa
+ * Combina validación de ID + datos de actualización
+ */
+const validateCompleteRecepcionUpdate = [
+  validateRecepcionId,
+  validateUpdateRecepcion,
+];
 
-    // Reemplazar req.body con el valor validado y limpio
-    req.body = value;
-    next();
-  };
-};
+/**
+ * Middleware compuesto para obtener recepción específica
+ * Combina validación de ID + query parameters
+ */
+const validateGetSpecificRecepcion = [
+  validateRecepcionId,
+  validateGetRecepcionByIdQuery,
+];
 
-// Validación específica para ID de recepción
-const validateRecepcionId = (req, res, next) => {
-  const { id } = req.params;
+/**
+ * Middleware compuesto para procesar recepción
+ * Combina validación de ID + parámetros de procesamiento
+ */
+const validateCompleteRecepcionProcessing = [
+  validateRecepcionId,
+  validateProcesarRecepcion,
+];
 
-  const schema = Joi.number().integer().positive().required().messages({
-    "number.base": "El ID debe ser un número",
-    "number.integer": "El ID debe ser un número entero",
-    "number.positive": "El ID debe ser un número positivo",
-    "any.required": "El ID es obligatorio",
-  });
+/**
+ * Middleware compuesto para cancelar recepción
+ * Solo necesita validación de ID
+ */
+const validateRecepcionCancellation = [validateRecepcionId];
 
-  const { error } = schema.validate(id);
+// =====================================================
+// 🔍 VALIDACIONES DE NEGOCIO ADICIONALES (OPCIONAL)
+// =====================================================
 
-  if (error) {
+/**
+ * Middleware personalizado para validar fechas de recepción
+ * Valida reglas de negocio específicas adicionales
+ */
+const validateBusinessDateRules = (req, res, next) => {
+  const { fecha_recepcion } = req.body;
+
+  if (!fecha_recepcion) {
+    return next(); // Ya validado por Joi
+  }
+
+  const fechaRecepcion = new Date(fecha_recepcion);
+  const hoy = new Date();
+  const hace30Dias = new Date();
+  hace30Dias.setDate(hace30Dias.getDate() - 30);
+
+  // Regla de negocio: No permitir recepciones muy antiguas (más de 30 días)
+  if (fechaRecepcion < hace30Dias) {
     return res.status(400).json({
       success: false,
-      error: "ID de recepción inválido",
+      error: "Regla de negocio violada",
       details: [
         {
-          field: "id",
-          message: error.details[0].message,
+          field: "fecha_recepcion",
+          message:
+            "No se pueden registrar recepciones con más de 30 días de antigüedad",
         },
       ],
     });
@@ -144,95 +138,92 @@ const validateRecepcionId = (req, res, next) => {
   next();
 };
 
-// Validación para query parameters de recepciones
-const validateRecepcionesQuery = (req, res, next) => {
-  const schema = Joi.object({
-    fecha_inicio: Joi.date()
-      .iso()
-      .when("fecha_fin", {
-        is: Joi.exist(),
-        then: Joi.required(),
-        otherwise: Joi.optional(),
-      })
-      .messages({
-        "date.base": "La fecha de inicio debe ser una fecha válida",
-        "date.format":
-          "La fecha de inicio debe estar en formato ISO (YYYY-MM-DD)",
-        "any.required":
-          "La fecha de inicio es requerida cuando se especifica fecha fin",
-      }),
+/**
+ * Middleware personalizado para validar productos en recepción
+ * Valida que todos los productos tengan cantidades válidas
+ */
+const validateProductosBusinessRules = (req, res, next) => {
+  const { productos } = req.body;
 
-    fecha_fin: Joi.date()
-      .iso()
-      .min(Joi.ref("fecha_inicio"))
-      .when("fecha_inicio", {
-        is: Joi.exist(),
-        then: Joi.required(),
-        otherwise: Joi.optional(),
-      })
-      .messages({
-        "date.base": "La fecha fin debe ser una fecha válida",
-        "date.format": "La fecha fin debe estar en formato ISO (YYYY-MM-DD)",
-        "date.min":
-          "La fecha fin debe ser posterior o igual a la fecha de inicio",
-        "any.required":
-          "La fecha fin es requerida cuando se especifica fecha de inicio",
-      }),
+  if (!productos || !Array.isArray(productos)) {
+    return next(); // Ya validado por Joi
+  }
 
-    proveedor_id: Joi.number().integer().positive().optional().messages({
-      "number.base": "El ID del proveedor debe ser un número",
-      "number.integer": "El ID del proveedor debe ser un número entero",
-      "number.positive": "El ID del proveedor debe ser un número positivo",
-    }),
+  // Regla de negocio: No permitir productos duplicados
+  const productosIds = productos.map((p) => p.producto_id);
+  const productosDuplicados = productosIds.filter(
+    (id, index) => productosIds.indexOf(id) !== index
+  );
 
-    estado: Joi.string()
-      .valid("pendiente", "procesada", "cancelada", "all")
-      .default("all")
-      .messages({
-        "any.only":
-          'El estado debe ser "pendiente", "procesada", "cancelada" o "all"',
-      }),
-
-    page: Joi.number().integer().min(1).default(1).messages({
-      "number.base": "La página debe ser un número",
-      "number.integer": "La página debe ser un número entero",
-      "number.min": "La página debe ser mayor a 0",
-    }),
-
-    limit: Joi.number().integer().min(1).max(100).default(20).messages({
-      "number.base": "El límite debe ser un número",
-      "number.integer": "El límite debe ser un número entero",
-      "number.min": "El límite debe ser mayor a 0",
-      "number.max": "El límite no puede ser mayor a 100",
-    }),
-  });
-
-  const { error, value } = schema.validate(req.query, {
-    stripUnknown: true,
-    convert: true,
-  });
-
-  if (error) {
-    const details = error.details.map((detail) => ({
-      field: detail.path.join("."),
-      message: detail.message,
-    }));
-
+  if (productosDuplicados.length > 0) {
     return res.status(400).json({
       success: false,
-      error: "Parámetros de consulta inválidos",
-      details,
+      error: "Regla de negocio violada",
+      details: [
+        {
+          field: "productos",
+          message: `Productos duplicados encontrados: ${productosDuplicados.join(
+            ", "
+          )}`,
+        },
+      ],
     });
   }
 
-  // Reemplazar req.query con los valores validados
-  req.query = value;
+  // Regla de negocio: Validar que el subtotal calculado sea correcto
+  const errores = [];
+  productos.forEach((producto, index) => {
+    const subtotalCalculado = parseFloat(
+      (producto.cantidad * producto.precio_unitario).toFixed(2)
+    );
+
+    // Permitir pequeñas diferencias por redondeo (0.01)
+    if (
+      producto.subtotal &&
+      Math.abs(producto.subtotal - subtotalCalculado) > 0.01
+    ) {
+      errores.push({
+        field: `productos[${index}].subtotal`,
+        message: `Subtotal incorrecto. Esperado: ${subtotalCalculado}, Recibido: ${producto.subtotal}`,
+      });
+    }
+  });
+
+  if (errores.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: "Errores en cálculo de subtotales",
+      details: errores,
+    });
+  }
+
   next();
 };
 
+// =====================================================
+// 📤 EXPORTACIONES LIMPIAS
+// =====================================================
+
 export {
-  validate,
+  // Schemas (para uso directo si necesario)
   recepcionesSchemas,
+
+  // Middlewares específicos listos para rutas
+  validateCreateRecepcion,
+  validateUpdateRecepcion,
   validateRecepcionId,
-  validateRecepcionesQuery,
+  validateGetRecepcionesQuery,
+  validateGetRecepcionByIdQuery,
+  validateProcesarRecepcion,
+
+  // Middlewares compuestos (opcional para rutas complejas)
+  validateCompleteRecepcionCreation,
+  validateCompleteRecepcionUpdate,
+  validateGetSpecificRecepcion,
+  validateCompleteRecepcionProcessing,
+  validateRecepcionCancellation,
+
+  // Validaciones de negocio adicionales (opcional)
+  validateBusinessDateRules,
+  validateProductosBusinessRules,
 };

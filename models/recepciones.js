@@ -51,7 +51,7 @@ export default (sequelize) => {
       fecha_creacion: {
         type: DataTypes.DATE,
         allowNull: true,
-        defaultValue: Sequelize.Sequelize.literal("CURRENT_TIMESTAMP"),
+        defaultValue: Sequelize.literal("CURRENT_TIMESTAMP"),
       },
     },
     {

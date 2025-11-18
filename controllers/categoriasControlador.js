@@ -1,244 +1,284 @@
-import { sequelize } from "../config/database.js";
-import db from "../models/index.js";
+// controllers/categoriasControlador.js - Solo Orquestación y Respuestas
+import categoriasService from "../services/categoriasService.js";
+import {
+  buildSuccessResponse,
+  buildBusinessErrorResponse,
+  createControllerLogger,
+  handleSequelizeError,
+  buildOperationMetadata,
+  generateSuccessMessage,
+  asyncControllerWrapper,
+} from "../utils/controllerResponseUtils.js";
 
-const { categorias, productos } = db;
+const logger = createControllerLogger("categorias");
 
-// Obtener todas las categorías con filtros
-const obtenerCategorias = async (req, res) => {
-  try {
-    const { activo } = req.query; // Ya validado por middleware
+// =====================================================
+// 📊 OBTENER CATEGORÍAS
+// =====================================================
+const obtenerCategorias = asyncControllerWrapper(async (req, res) => {
+  const result = await categoriasService.obtenerCategoriasFiltradas(req.query);
 
-    // Construir filtros dinámicos
-    const where = {};
+  const metadata = buildOperationMetadata("consulta", null, {
+    ...result.metadata,
+    tiempo_consulta_ms: performance.now() - req.startTime,
+  });
 
-    if (activo !== "all") {
-      where.activo = activo === "true";
-    }
-
-    const categoriasData = await categorias.findAll({
-      where,
-      order: [["nombre", "ASC"]],
-    });
-
-    res.json({
-      success: true,
-      data: categoriasData,
-    });
-  } catch (error) {
-    console.error("Error obteniendo categorías:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error obteniendo categorías",
-      message: error.message,
-    });
+  if (result.fromCache) {
+    logger.cache("HIT", "categorias:list");
+  } else {
+    logger.cache("MISS → SET", "categorias:list");
   }
-};
 
-// Obtener categoría por ID
-const obtenerCategoriaPorId = async (req, res) => {
-  try {
-    const { id } = req.params;
+  res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+}, "consulta de categorías");
 
-    const categoria = await categorias.findByPk(id);
+// =====================================================
+// 📄 OBTENER CATEGORÍA POR ID
+// =====================================================
+const obtenerCategoriaPorId = asyncControllerWrapper(async (req, res) => {
+  const { id } = req.params;
+  const result = await categoriasService.obtenerCategoriaPorId(id, req.query);
 
-    if (!categoria) {
-      return res.status(404).json({
-        success: false,
-        error: "Categoría no encontrada",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: categoria,
-    });
-  } catch (error) {
-    console.error("Error obteniendo categoría:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error obteniendo categoría",
-      message: error.message,
-    });
+  if (!result) {
+    return res.status(404).json(
+      buildBusinessErrorResponse("Categoría no encontrada", {
+        categoria_id: id,
+      })
+    );
   }
-};
 
-// Crear nueva categoría
-const crearCategoria = async (req, res) => {
-  const transaction = await sequelize.transaction();
+  const metadata = buildOperationMetadata(
+    "consulta_individual",
+    id,
+    result.metadata
+  );
 
+  if (result.fromCache) {
+    logger.cache("HIT", `categoria:${id}`);
+  } else {
+    logger.cache("MISS → SET", `categoria:${id}`);
+  }
+
+  res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+}, "consulta de categoría");
+
+// =====================================================
+// ✨ CREAR CATEGORÍA
+// =====================================================
+const crearCategoria = asyncControllerWrapper(async (req, res) => {
   try {
-    const { nombre, descripcion } = req.body;
+    const nuevaCategoria = await categoriasService.crearCategoria(req.body);
 
-    // VALIDACIONES DE BASE DE DATOS
+    const metadata = buildOperationMetadata("creacion", nuevaCategoria.id);
 
-    // Verificar si ya existe una categoría con el mismo nombre
-    const existingByName = await categorias.findOne({
-      where: {
-        nombre: { [sequelize.Op.like]: nombre.trim() },
-      },
-      transaction,
+    logger.business("Categoría creada", {
+      id: nuevaCategoria.id,
+      nombre: nuevaCategoria.nombre,
     });
 
-    if (existingByName) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: `Ya existe una categoría llamada "${nombre.trim()}"`,
-      });
-    }
-
-    // Crear la categoría
-    const nuevaCategoria = await categorias.create(
-      {
-        nombre: nombre.trim(),
-        descripcion: descripcion?.trim() || null,
-      },
-      { transaction }
+    const mensaje = generateSuccessMessage(
+      "crear",
+      "Categoría",
+      nuevaCategoria.nombre
     );
 
-    await transaction.commit();
-
-    res.status(201).json({
-      success: true,
-      message: `${nombre.trim()} fue creada con éxito`,
-      data: { id: nuevaCategoria.id },
-    });
-  } catch (error) {
-    await transaction.rollback();
-    console.error("Error creando categoría:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error creando categoría",
-      message: error.message,
-    });
-  }
-};
-
-// Actualizar categoría
-const actualizarCategoria = async (req, res) => {
-  const transaction = await sequelize.transaction();
-
-  try {
-    const { id } = req.params;
-    const fieldsToUpdate = { ...req.body }; // Joi ya validó los campos
-
-    // Verificar si la categoría existe
-    const categoria = await categorias.findByPk(id, { transaction });
-    if (!categoria) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        error: `No se encontró una categoría con el id: ${id}`,
-      });
-    }
-
-    // VALIDACIONES DE BASE DE DATOS
-
-    // Verificar nombre único (si cambió)
-    if (fieldsToUpdate.nombre && fieldsToUpdate.nombre !== categoria.nombre) {
-      const existingByName = await categorias.findOne({
-        where: {
-          nombre: { [sequelize.Op.like]: fieldsToUpdate.nombre.trim() },
-          id: { [sequelize.Op.ne]: id },
+    res.status(201).json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          categoria: {
+            id: nuevaCategoria.id,
+            nombre: nuevaCategoria.nombre,
+            descripcion: nuevaCategoria.descripcion,
+            activo: nuevaCategoria.activo,
+            fecha_creacion: nuevaCategoria.fecha_creacion,
+          },
         },
-        transaction,
-      });
-
-      if (existingByName) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          error: `Ya existe una categoría llamada "${fieldsToUpdate.nombre.trim()}"`,
-        });
-      }
+        metadata
+      )
+    );
+  } catch (error) {
+    // Manejo de errores de negocio específicos
+    if (error.message.startsWith("DUPLICATE_NAME:")) {
+      const [, categoriaExistente] = error.message.split(":");
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          "Ya existe una categoría con nombre similar",
+          {
+            nombre_enviado: req.body.nombre.trim(),
+            categoria_existente: categoriaExistente,
+          }
+        )
+      );
     }
 
-    // Limpiar campos para actualización
-    if (fieldsToUpdate.nombre)
-      fieldsToUpdate.nombre = fieldsToUpdate.nombre.trim();
-    if (fieldsToUpdate.descripcion !== undefined)
-      fieldsToUpdate.descripcion = fieldsToUpdate.descripcion?.trim() || null;
-
-    // Actualizar la categoría
-    await categoria.update(fieldsToUpdate, { transaction });
-
-    await transaction.commit();
-
-    res.json({
-      success: true,
-      message: `${
-        fieldsToUpdate.nombre || categoria.nombre
-      } fue actualizada con éxito`,
-    });
-  } catch (error) {
-    await transaction.rollback();
-    console.error("Error actualizando categoría:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error actualizando categoría",
-      message: error.message,
-    });
+    throw error; // Re-throw para manejo genérico
   }
-};
+}, "creación de categoría");
 
-// Eliminar categoría (desactivar)
-const eliminarCategoria = async (req, res) => {
-  const transaction = await sequelize.transaction();
+// =====================================================
+// 🔄 ACTUALIZAR CATEGORÍA
+// =====================================================
+const actualizarCategoria = asyncControllerWrapper(async (req, res) => {
+  const { id } = req.params;
 
   try {
-    const { id } = req.params;
+    const result = await categoriasService.actualizarCategoria(id, req.body);
 
-    // Verificar si la categoría existe
-    const categoria = await categorias.findByPk(id, { transaction });
-    if (!categoria) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        error: "Categoría no encontrada",
-      });
-    }
-
-    // VALIDACIÓN DE NEGOCIO: Verificar si hay productos activos asociados
-    const productosActivos = await productos.count({
-      where: {
-        categoria_id: id,
-        activo: true,
-      },
-      transaction,
+    const metadata = buildOperationMetadata("actualizacion", id, {
+      campos_modificados: result.camposModificados,
     });
 
-    if (productosActivos > 0) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: `No se puede desactivar la categoría porque tiene ${productosActivos} producto(s) activo(s) asociado(s)`,
-      });
-    }
-
-    // Desactivar la categoría
-    await categoria.update({ activo: false }, { transaction });
-
-    await transaction.commit();
-
-    res.json({
-      success: true,
-      message: "Categoría desactivada exitosamente",
+    logger.business("Categoría actualizada", {
+      id,
+      campos: result.camposModificados,
     });
+
+    const mensaje = generateSuccessMessage(
+      "actualizar",
+      "Categoría",
+      req.body.nombre || result.categoria.nombre
+    );
+
+    res.json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          cambios_realizados: result.camposModificados,
+        },
+        metadata
+      )
+    );
   } catch (error) {
-    await transaction.rollback();
-    console.error("Error eliminando categoría:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error eliminando categoría",
-      message: error.message,
-    });
-  }
-};
+    // Manejo de errores de negocio específicos
+    if (error.message === "CATEGORIA_NOT_FOUND") {
+      return res.status(404).json(
+        buildBusinessErrorResponse("Categoría no encontrada", {
+          categoria_id: id,
+        })
+      );
+    }
 
+    if (error.message.startsWith("DUPLICATE_NAME:")) {
+      const [, categoriaExistente] = error.message.split(":");
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          "Ya existe una categoría con nombre similar",
+          {
+            nombre_enviado: req.body.nombre.trim(),
+            categoria_existente: categoriaExistente,
+          }
+        )
+      );
+    }
+
+    throw error; // Re-throw para manejo genérico
+  }
+}, "actualización de categoría");
+
+// =====================================================
+// 🗑️ ELIMINAR (DESACTIVAR) CATEGORÍA
+// =====================================================
+const eliminarCategoria = asyncControllerWrapper(async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const categoria = await categoriasService.desactivarCategoria(id);
+
+    const metadata = buildOperationMetadata("desactivacion", id, {
+      fecha_desactivacion: new Date().toISOString(),
+    });
+
+    logger.business("Categoría desactivada", { id, nombre: categoria.nombre });
+
+    const mensaje = generateSuccessMessage(
+      "desactivar",
+      "Categoría",
+      categoria.nombre
+    );
+
+    res.json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          categoria: {
+            id: categoria.id,
+            nombre: categoria.nombre,
+          },
+        },
+        metadata
+      )
+    );
+  } catch (error) {
+    // Manejo de errores de negocio específicos
+    if (error.message === "CATEGORIA_NOT_FOUND") {
+      return res.status(404).json(
+        buildBusinessErrorResponse("Categoría no encontrada", {
+          categoria_id: id,
+        })
+      );
+    }
+
+    if (error.message === "CATEGORIA_ALREADY_INACTIVE") {
+      return res.status(400).json(
+        buildBusinessErrorResponse("La categoría ya está desactivada", {
+          categoria_id: id,
+        })
+      );
+    }
+
+    if (error.message.startsWith("ACTIVE_PRODUCTS:")) {
+      const [, productosActivos, productosEjemplo] = error.message.split(":");
+      const ejemplos = JSON.parse(productosEjemplo);
+
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          `No se puede desactivar la categoría porque tiene productos activos asociados`,
+          {
+            productos_activos: parseInt(productosActivos),
+            ejemplos,
+            sugerencia: "Desactive primero los productos de esta categoría",
+          }
+        )
+      );
+    }
+
+    throw error; // Re-throw para manejo genérico
+  }
+}, "eliminación de categoría");
+
+// =====================================================
+// 📊 ESTADÍSTICAS DE CATEGORÍAS
+// =====================================================
+const obtenerEstadisticasCategorias = asyncControllerWrapper(
+  async (req, res) => {
+    const result = await categoriasService.obtenerEstadisticasCompletas();
+
+    const metadata = buildOperationMetadata(
+      "estadisticas_completas",
+      null,
+      result.metadata
+    );
+
+    if (result.fromCache) {
+      logger.cache("HIT", "categorias:estadisticas");
+    } else {
+      logger.cache("MISS → SET", "categorias:estadisticas");
+    }
+
+    res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+  },
+  "consulta de estadísticas"
+);
+
+// =====================================================
+// 📤 EXPORTACIONES
+// =====================================================
 export {
   obtenerCategorias,
   obtenerCategoriaPorId,
   crearCategoria,
   actualizarCategoria,
   eliminarCategoria,
+  obtenerEstadisticasCategorias,
 };

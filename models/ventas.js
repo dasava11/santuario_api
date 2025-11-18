@@ -13,6 +13,7 @@ export default (sequelize) => {
       numero_venta: {
         type: DataTypes.STRING(100),
         allowNull: false,
+        unique: true, // 🔥 AGREGADO: Evitar duplicados
       },
       usuario_id: {
         type: DataTypes.INTEGER,
@@ -31,10 +32,39 @@ export default (sequelize) => {
         allowNull: true,
         defaultValue: "efectivo",
       },
+      estado: {
+        // 🔥 NUEVO CAMPO
+        type: DataTypes.ENUM("activa", "anulada"),
+        allowNull: false,
+        defaultValue: "activa",
+        comment: "Estado de la venta: activa o anulada",
+      },
       fecha_venta: {
         type: DataTypes.DATE,
         allowNull: true,
         defaultValue: Sequelize.Sequelize.literal("CURRENT_TIMESTAMP"),
+      },
+      fecha_anulacion: {
+        // 🔥 NUEVO CAMPO: Para auditoría
+        type: DataTypes.DATE,
+        allowNull: true,
+        comment: "Fecha en que se anuló la venta",
+      },
+      usuario_anulacion_id: {
+        // 🔥 NUEVO CAMPO: Para auditoría
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: "usuarios",
+          key: "id",
+        },
+        comment: "Usuario que anuló la venta",
+      },
+      motivo_anulacion: {
+        // 🔥 NUEVO CAMPO: Para auditoría
+        type: DataTypes.TEXT,
+        allowNull: true,
+        comment: "Motivo de la anulación",
       },
     },
     {
@@ -49,6 +79,12 @@ export default (sequelize) => {
           fields: [{ name: "id" }],
         },
         {
+          name: "numero_venta_unique", // 🔥 NUEVO ÍNDICE
+          unique: true,
+          using: "BTREE",
+          fields: [{ name: "numero_venta" }],
+        },
+        {
           name: "usuario_id",
           using: "BTREE",
           fields: [{ name: "usuario_id" }],
@@ -58,6 +94,11 @@ export default (sequelize) => {
           using: "BTREE",
           fields: [{ name: "fecha_venta" }],
         },
+        {
+          name: "idx_ventas_estado", // 🔥 NUEVO ÍNDICE
+          using: "BTREE",
+          fields: [{ name: "estado" }],
+        },
       ],
     }
   );
@@ -66,6 +107,11 @@ export default (sequelize) => {
     ventas.belongsTo(models.usuarios, {
       as: "usuario",
       foreignKey: "usuario_id",
+    });
+    // 🔥 NUEVA ASOCIACIÓN: Usuario que anuló
+    ventas.belongsTo(models.usuarios, {
+      as: "usuario_anulacion",
+      foreignKey: "usuario_anulacion_id",
     });
     ventas.hasMany(models.detalle_ventas, {
       as: "detalle_venta",

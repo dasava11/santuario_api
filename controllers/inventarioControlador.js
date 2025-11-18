@@ -1,465 +1,369 @@
-import { sequelize } from "../config/database.js";
-import db from "../models/index.js";
+// controllers/inventarioControlador.js
+import inventarioService from "../services/inventarioService.js";
+import {
+  buildSuccessResponse,
+  createControllerLogger,
+  buildOperationMetadata,
+  buildBusinessErrorResponse,
+  generateSuccessMessage,
+  asyncControllerWrapper,
+} from "../utils/controllerResponseUtils.js";
 
-const { movimientos_inventario, productos, categorias, usuarios } = db;
+const logger = createControllerLogger("inventario");
 
-// Obtener movimientos de inventario con filtros y paginación
-const obtenerMovimientos = async (req, res) => {
-  try {
-    const {
-      producto_id,
-      tipo_movimiento,
-      fecha_inicio,
-      fecha_fin,
-      page,
-      limit,
-    } = req.query;
+// =====================================================
+// CONSULTAS - MOVIMIENTOS
+// =====================================================
 
-    // Construir filtros dinámicos
-    const where = {};
+/**
+ * Obtener movimientos de inventario con filtros
+ */
+const obtenerMovimientos = asyncControllerWrapper(async (req, res) => {
+  const result = await inventarioService.obtenerMovimientosFiltrados(req.query);
 
-    if (producto_id) {
-      where.producto_id = producto_id;
-    }
+  const metadata = buildOperationMetadata("consulta_movimientos", null, {
+    ...result.metadata,
+    tiempo_consulta_ms: performance.now() - req.startTime,
+  });
 
-    if (tipo_movimiento) {
-      where.tipo_movimiento = tipo_movimiento;
-    }
-
-    // Filtro de fecha
-    if (fecha_inicio && fecha_fin) {
-      where.fecha_movimiento = {
-        [sequelize.Op.between]: [
-          new Date(fecha_inicio + " 00:00:00"),
-          new Date(fecha_fin + " 23:59:59"),
-        ],
-      };
-    }
-
-    // Calcular offset para paginación
-    const offset = (page - 1) * limit;
-
-    // Consulta con paginación e incluir datos relacionados
-    const { count, rows: movimientos } =
-      await movimientos_inventario.findAndCountAll({
-        where,
-        include: [
-          {
-            model: productos,
-            as: "producto",
-            attributes: ["id", "nombre", "codigo_barras"],
-          },
-          {
-            model: usuarios,
-            as: "usuario",
-            attributes: ["id", "nombre", "apellido"],
-          },
-        ],
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        order: [["fecha_movimiento", "DESC"]],
-        distinct: true,
-      });
-
-    res.json({
-      success: true,
-      data: {
-        movimientos,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: count,
-          pages: Math.ceil(count / limit),
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Error obteniendo movimientos:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error obteniendo movimientos de inventario",
-      message: error.message,
-    });
+  if (result.fromCache) {
+    logger.cache("HIT", "movimientos:list");
+  } else {
+    logger.cache("MISS → SET", "movimientos:list");
   }
-};
 
-// Obtener productos con stock bajo
-const obtenerProductosStockBajo = async (req, res) => {
-  try {
-    const productosStockBajo = await productos.findAll({
-      where: {
-        [sequelize.Op.and]: [
-          sequelize.where(
-            sequelize.col("stock_actual"),
-            "<=",
-            sequelize.col("stock_minimo")
-          ),
-          { activo: true },
-        ],
-      },
-      include: [
-        {
-          model: categorias,
-          as: "categorium",
-          attributes: ["id", "nombre"],
-        },
-      ],
-      order: [
-        [sequelize.literal("(stock_actual - stock_minimo)"), "ASC"],
-        ["nombre", "ASC"],
-      ],
-    });
-
-    res.json({
-      success: true,
-      data: productosStockBajo,
-    });
-  } catch (error) {
-    console.error("Error obteniendo productos con stock bajo:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error obteniendo productos con stock bajo",
-      message: error.message,
-    });
-  }
-};
-
-// Obtener resumen general del inventario
-const obtenerResumenInventario = async (req, res) => {
-  try {
-    // Total de productos activos
-    const totalProductos = await productos.count({
-      where: { activo: true },
-    });
-
-    // Productos con stock bajo
-    const productosStockBajo = await productos.count({
-      where: {
-        [sequelize.Op.and]: [
-          sequelize.where(
-            sequelize.col("stock_actual"),
-            "<=",
-            sequelize.col("stock_minimo")
-          ),
-          { activo: true },
-        ],
-      },
-    });
-
-    // Productos sin stock
-    const productosSinStock = await productos.count({
-      where: {
-        activo: true,
-        stock_actual: { [sequelize.Op.lte]: 0 },
-      },
-    });
-
-    // Valor total del inventario
-    const valorInventario = await productos.findOne({
-      attributes: [
-        [
-          sequelize.fn(
-            "COALESCE",
-            sequelize.fn(
-              "SUM",
-              sequelize.literal("stock_actual * precio_compra")
-            ),
-            0
-          ),
-          "valor_compra",
-        ],
-        [
-          sequelize.fn(
-            "COALESCE",
-            sequelize.fn(
-              "SUM",
-              sequelize.literal("stock_actual * precio_venta")
-            ),
-            0
-          ),
-          "valor_venta",
-        ],
-      ],
-      where: { activo: true },
-      raw: true,
-    });
-
-    // Categorías con más productos
-    const categoriasResumen = await categorias.findAll({
-      attributes: [
-        "id",
-        "nombre",
-        [
-          sequelize.fn("COUNT", sequelize.col("productos.id")),
-          "total_productos",
-        ],
-        [
-          sequelize.fn(
-            "COALESCE",
-            sequelize.fn("SUM", sequelize.col("productos.stock_actual")),
-            0
-          ),
-          "total_stock",
-        ],
-      ],
-      include: [
-        {
-          model: productos,
-          as: "productos",
-          where: { activo: true },
-          attributes: [],
-          required: false,
-        },
-      ],
-      where: { activo: true },
-      group: ["categorias.id", "categorias.nombre"],
-      order: [[sequelize.literal("total_productos"), "DESC"]],
-      limit: 10,
-      raw: true,
-    });
-
-    // Movimientos recientes (últimos 7 días)
-    const fechaInicio = new Date();
-    fechaInicio.setDate(fechaInicio.getDate() - 7);
-
-    const movimientosRecientes = await movimientos_inventario.findAll({
-      attributes: [
-        "tipo_movimiento",
-        [sequelize.fn("COUNT", "*"), "cantidad"],
-        [sequelize.fn("DATE", sequelize.col("fecha_movimiento")), "fecha"],
-      ],
-      where: {
-        fecha_movimiento: {
-          [sequelize.Op.gte]: fechaInicio,
-        },
-      },
-      group: [
-        "tipo_movimiento",
-        sequelize.fn("DATE", sequelize.col("fecha_movimiento")),
-      ],
-      order: [
-        [sequelize.fn("DATE", sequelize.col("fecha_movimiento")), "DESC"],
-        ["tipo_movimiento", "ASC"],
-      ],
-      raw: true,
-    });
-
-    res.json({
-      success: true,
-      data: {
-        total_productos: totalProductos,
-        productos_stock_bajo: productosStockBajo,
-        productos_sin_stock: productosSinStock,
-        valor_inventario: valorInventario,
-        categorias_resumen: categoriasResumen,
-        movimientos_recientes: movimientosRecientes,
-      },
-    });
-  } catch (error) {
-    console.error("Error obteniendo resumen de inventario:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error obteniendo resumen de inventario",
-      message: error.message,
-    });
-  }
-};
-
-// Ajustar inventario
-const ajustarInventario = async (req, res) => {
-  const transaction = await sequelize.transaction();
-
-  try {
-    const { producto_id, nuevo_stock, observaciones } = req.body;
-
-    // Verificar si el producto existe
-    const producto = await productos.findByPk(producto_id, {
-      transaction,
-      where: { activo: true },
-    });
-
-    if (!producto) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        error: "Producto no encontrado o inactivo",
-      });
-    }
-
-    const stockAnterior = parseFloat(producto.stock_actual);
-    const nuevoStockFloat = parseFloat(nuevo_stock);
-    const diferencia = nuevoStockFloat - stockAnterior;
-
-    // VALIDACIÓN DE NEGOCIO: No permitir ajuste sin cambio
-    if (diferencia === 0) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: "El nuevo stock es igual al stock actual",
-      });
-    }
-
-    // Actualizar stock del producto
-    await producto.update(
+  res.json(
+    buildSuccessResponse(
       {
-        stock_actual: nuevoStockFloat,
+        movimientos: result.data,
+        pagination: result.pagination,
       },
-      { transaction }
-    );
+      metadata,
+      result.fromCache
+    )
+  );
+}, "consulta de movimientos");
 
-    // Registrar movimiento de inventario
-    const tipoMovimiento = diferencia > 0 ? "entrada" : "salida";
-    const descripcionAjuste =
-      diferencia > 0
-        ? `Ajuste de inventario: Incremento de ${Math.abs(diferencia)} unidades`
-        : `Ajuste de inventario: Reducción de ${Math.abs(diferencia)} unidades`;
+// =====================================================
+// CONSULTAS - STOCK BAJO Y ALERTAS
+// =====================================================
 
-    await movimientos_inventario.create(
-      {
-        producto_id: producto_id,
-        tipo_movimiento: "ajuste",
-        cantidad: Math.abs(diferencia),
-        stock_anterior: stockAnterior,
-        stock_nuevo: nuevoStockFloat,
-        referencia_tipo: "ajuste",
-        referencia_id: null,
-        usuario_id: req.user.id,
-        observaciones: observaciones || descripcionAjuste,
-      },
-      { transaction }
-    );
+/**
+ * Obtener productos con stock bajo
+ */
+const obtenerProductosStockBajo = asyncControllerWrapper(async (req, res) => {
+  const result = await inventarioService.obtenerProductosStockBajo();
 
-    await transaction.commit();
+  const metadata = buildOperationMetadata("consulta_stock_bajo", null, {
+    timestamp: new Date().toISOString(),
+  });
 
-    res.json({
-      success: true,
-      message: "Ajuste de inventario realizado exitosamente",
-      data: {
-        stock_anterior: stockAnterior,
-        stock_nuevo: nuevoStockFloat,
-        diferencia: diferencia,
-        tipo_ajuste: diferencia > 0 ? "incremento" : "reduccion",
-      },
-    });
-  } catch (error) {
-    await transaction.rollback();
-    console.error("Error ajustando inventario:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error ajustando inventario",
-      message: error.message,
-    });
+  if (result.fromCache) {
+    logger.cache("HIT", "inventario:stock_bajo");
+  } else {
+    logger.cache("MISS → SET", "inventario:stock_bajo");
   }
-};
 
-// Obtener reporte de movimientos por producto
-const obtenerReporteMovimientosPorProducto = async (req, res) => {
-  try {
+  res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+}, "consulta de productos con stock bajo");
+
+/**
+ * Obtener alertas críticas de inventario
+ */
+const obtenerAlertasCriticas = asyncControllerWrapper(async (req, res) => {
+  const result = await inventarioService.obtenerAlertasCriticas();
+
+  const metadata = buildOperationMetadata("consulta_alertas_criticas", null, {
+    timestamp: new Date().toISOString(),
+  });
+
+  if (result.fromCache) {
+    logger.cache("HIT", "inventario:alertas");
+  } else {
+    logger.cache("MISS → SET", "inventario:alertas");
+  }
+
+  res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+}, "consulta de alertas críticas");
+
+// =====================================================
+// CONSULTAS - RESUMEN Y VALOR
+// =====================================================
+
+/**
+ * Obtener resumen general del inventario
+ */
+const obtenerResumenInventario = asyncControllerWrapper(async (req, res) => {
+  const result = await inventarioService.obtenerResumenInventario();
+
+  const metadata = buildOperationMetadata("consulta_resumen", null, {
+    ...result.metadata,
+    tiempo_consulta_ms: performance.now() - req.startTime,
+  });
+
+  if (result.fromCache) {
+    logger.cache("HIT", "inventario:resumen");
+  } else {
+    logger.cache("MISS → SET", "inventario:resumen");
+  }
+
+  res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+}, "consulta de resumen de inventario");
+
+/**
+ * Obtener valor total del inventario
+ */
+const obtenerValorInventario = asyncControllerWrapper(async (req, res) => {
+  const result = await inventarioService.obtenerValorInventario();
+
+  const metadata = buildOperationMetadata("consulta_valor", null, {
+    timestamp: new Date().toISOString(),
+  });
+
+  if (result.fromCache) {
+    logger.cache("HIT", "inventario:valor");
+  } else {
+    logger.cache("MISS → SET", "inventario:valor");
+  }
+
+  res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+}, "consulta de valor de inventario");
+
+// =====================================================
+// CONSULTAS - ESTADÍSTICAS Y REPORTES
+// =====================================================
+
+/**
+ * Obtener estadísticas de movimientos
+ */
+const obtenerEstadisticasMovimientos = asyncControllerWrapper(
+  async (req, res) => {
+    const { dias } = req.query;
+    const result = await inventarioService.obtenerEstadisticasMovimientos(dias);
+
+    const metadata = buildOperationMetadata("consulta_estadisticas", null, {
+      ...result.metadata,
+    });
+
+    if (result.fromCache) {
+      logger.cache("HIT", `inventario:estadisticas:${dias}`);
+    } else {
+      logger.cache("MISS → SET", `inventario:estadisticas:${dias}`);
+    }
+
+    res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+  },
+  "consulta de estadísticas de movimientos"
+);
+
+/**
+ * Obtener reporte de movimientos por producto
+ */
+const obtenerReporteMovimientosPorProducto = asyncControllerWrapper(
+  async (req, res) => {
     const { producto_id } = req.params;
-    const { fecha_inicio, fecha_fin, limit = 100 } = req.query;
 
-    // Validar que el producto existe
-    const producto = await productos.findByPk(producto_id, {
-      attributes: ["id", "nombre", "codigo_barras", "stock_actual"],
-      include: [
-        {
-          model: categorias,
-          as: "categorium",
-          attributes: ["id", "nombre"],
-        },
-      ],
-    });
+    try {
+      const result =
+        await inventarioService.obtenerReporteMovimientosPorProducto(
+          producto_id,
+          req.query
+        );
 
-    if (!producto) {
-      return res.status(404).json({
-        success: false,
-        error: "Producto no encontrado",
-      });
+      const metadata = buildOperationMetadata(
+        "consulta_reporte_producto",
+        producto_id,
+        result.metadata
+      );
+
+      if (result.fromCache) {
+        logger.cache("HIT", `inventario:reporte:${producto_id}`);
+      } else {
+        logger.cache("MISS → SET", `inventario:reporte:${producto_id}`);
+      }
+
+      res.json(buildSuccessResponse(result.data, metadata, result.fromCache));
+    } catch (error) {
+      if (error.message === "PRODUCTO_NOT_FOUND") {
+        return res.status(404).json(
+          buildBusinessErrorResponse("Producto no encontrado", {
+            producto_id,
+          })
+        );
+      }
+      throw error;
     }
+  },
+  "consulta de reporte por producto"
+);
 
-    // Construir filtros
-    const where = { producto_id };
+// =====================================================
+// OPERACIONES - ACTUALIZAR STOCK
+// =====================================================
 
-    if (fecha_inicio && fecha_fin) {
-      where.fecha_movimiento = {
-        [sequelize.Op.between]: [
-          new Date(fecha_inicio + " 00:00:00"),
-          new Date(fecha_fin + " 23:59:59"),
-        ],
-      };
-    }
+/**
+ * Actualizar stock de producto (movimiento normal)
+ */
+const actualizarStock = asyncControllerWrapper(async (req, res) => {
+  const { id } = req.params;
 
-    // Obtener movimientos del producto
-    const movimientos = await movimientos_inventario.findAll({
-      where,
-      include: [
-        {
-          model: usuarios,
-          as: "usuario",
-          attributes: ["id", "nombre", "apellido"],
-        },
-      ],
-      order: [["fecha_movimiento", "DESC"]],
-      limit: parseInt(limit),
-    });
-
-    // Calcular estadísticas
-    const estadisticas = await movimientos_inventario.findOne({
-      attributes: [
-        [sequelize.fn("COUNT", "*"), "total_movimientos"],
-        [
-          sequelize.fn(
-            "SUM",
-            sequelize.literal(
-              `CASE WHEN tipo_movimiento = 'entrada' THEN cantidad ELSE 0 END`
-            )
-          ),
-          "total_entradas",
-        ],
-        [
-          sequelize.fn(
-            "SUM",
-            sequelize.literal(
-              `CASE WHEN tipo_movimiento = 'salida' THEN cantidad ELSE 0 END`
-            )
-          ),
-          "total_salidas",
-        ],
-      ],
-      where,
-      raw: true,
-    });
-
-    res.json({
-      success: true,
-      data: {
-        producto,
-        movimientos,
-        estadisticas,
-        filtros_aplicados: {
-          fecha_inicio: fecha_inicio || null,
-          fecha_fin: fecha_fin || null,
-          limite: parseInt(limit),
-        },
-      },
-    });
-  } catch (error) {
-    console.error(
-      "Error obteniendo reporte de movimientos por producto:",
-      error
+  try {
+    const result = await inventarioService.actualizarStock(
+      id,
+      req.body,
+      req.user.id
     );
-    res.status(500).json({
-      success: false,
-      error: "Error obteniendo reporte de movimientos",
-      message: error.message,
-    });
-  }
-};
 
+    const metadata = buildOperationMetadata("actualizacion_stock", id, {
+      stock_anterior: result.stock_anterior,
+      stock_nuevo: result.stock_nuevo,
+      tipo_movimiento: result.tipo_movimiento,
+    });
+
+    logger.business("Stock actualizado", {
+      producto_id: id,
+      tipo: result.tipo_movimiento,
+      cantidad: result.movimiento,
+      usuario_id: req.user.id,
+    });
+
+    const mensaje = `Stock actualizado exitosamente: ${result.tipo_movimiento} de ${result.movimiento} unidades`;
+
+    res.json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          stock_anterior: result.stock_anterior,
+          stock_nuevo: result.stock_nuevo,
+          movimiento: result.movimiento,
+          tipo_movimiento: result.tipo_movimiento,
+        },
+        metadata
+      )
+    );
+  } catch (error) {
+    if (error.message === "PRODUCTO_NOT_FOUND") {
+      return res.status(404).json(
+        buildBusinessErrorResponse("Producto no encontrado", {
+          producto_id: id,
+        })
+      );
+    }
+
+    if (error.message === "STOCK_INSUFICIENTE") {
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          "Stock insuficiente para realizar la operación",
+          {
+            tipo_error: "stock_insuficiente",
+            sugerencia: "Verifique la cantidad disponible antes de la salida",
+          }
+        )
+      );
+    }
+
+    if (error.message === "TIPO_MOVIMIENTO_INVALIDO") {
+      return res.status(400).json(
+        buildBusinessErrorResponse("Tipo de movimiento inválido", {
+          tipos_validos: ["entrada", "salida", "ajuste"],
+        })
+      );
+    }
+
+    throw error;
+  }
+}, "actualización de stock");
+
+// =====================================================
+// OPERACIONES - AJUSTAR INVENTARIO
+// =====================================================
+
+/**
+ * Ajustar inventario (corrección directa de stock)
+ */
+const ajustarInventario = asyncControllerWrapper(async (req, res) => {
+  const { producto_id, nuevo_stock, observaciones } = req.body;
+
+  try {
+    const result = await inventarioService.ajustarInventario(
+      producto_id,
+      nuevo_stock,
+      observaciones,
+      req.user.id
+    );
+
+    const metadata = buildOperationMetadata("ajuste_inventario", producto_id, {
+      stock_anterior: result.stock_anterior,
+      stock_nuevo: result.stock_nuevo,
+      diferencia: result.diferencia,
+      tipo_ajuste: result.tipo_ajuste,
+    });
+
+    logger.business("Inventario ajustado", {
+      producto_id,
+      tipo_ajuste: result.tipo_ajuste,
+      diferencia: Math.abs(result.diferencia),
+      usuario_id: req.user.id,
+    });
+
+    const mensaje = `Ajuste de inventario realizado exitosamente: ${
+      result.tipo_ajuste
+    } de ${Math.abs(result.diferencia)} unidades`;
+
+    res.json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          stock_anterior: result.stock_anterior,
+          stock_nuevo: result.stock_nuevo,
+          diferencia: result.diferencia,
+          tipo_ajuste: result.tipo_ajuste,
+        },
+        metadata
+      )
+    );
+  } catch (error) {
+    if (error.message === "PRODUCTO_NOT_FOUND") {
+      return res.status(404).json(
+        buildBusinessErrorResponse("Producto no encontrado o inactivo", {
+          producto_id,
+        })
+      );
+    }
+
+    if (error.message === "STOCK_SIN_CAMBIOS") {
+      return res.status(400).json(
+        buildBusinessErrorResponse("El nuevo stock es igual al stock actual", {
+          tipo_error: "sin_cambios",
+          sugerencia: "Proporcione un valor diferente al actual",
+        })
+      );
+    }
+
+    throw error;
+  }
+}, "ajuste de inventario");
+
+// =====================================================
+// EXPORTACIONES
+// =====================================================
 export {
+  // Consultas - Movimientos
   obtenerMovimientos,
+
+  // Consultas - Stock Bajo y Alertas
   obtenerProductosStockBajo,
+  obtenerAlertasCriticas,
+
+  // Consultas - Resumen y Valor
   obtenerResumenInventario,
-  ajustarInventario,
+  obtenerValorInventario,
+
+  // Consultas - Estadísticas y Reportes
+  obtenerEstadisticasMovimientos,
   obtenerReporteMovimientosPorProducto,
+
+  // Operaciones
+  actualizarStock,
+  ajustarInventario,
 };
