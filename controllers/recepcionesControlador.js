@@ -238,7 +238,36 @@ const procesarRecepcion = asyncControllerWrapper(async (req, res) => {
       req.body
     );
 
-    // ... resto del código existente ...
+    const metadata = buildOperationMetadata("procesamiento", id, {
+      fecha_procesamiento: new Date().toISOString(),
+      usuario_proceso: req.user.id,
+    });
+
+    logger.business("Recepción procesada", {
+      id,
+      numero_factura: recepcion.numero_factura,
+      usuario: req.user.id,
+    });
+
+    const mensaje = generateSuccessMessage(
+      "procesar",
+      "Recepción",
+      recepcion.numero_factura
+    );
+
+    res.json(
+      buildSuccessResponse(
+        {
+          mensaje,
+          recepcion: {
+            id: recepcion.id,
+            numero_factura: recepcion.numero_factura,
+            estado: recepcion.estado,
+          },
+        },
+        metadata
+      )
+    );
   } catch (error) {
     // Manejador existente
     if (error.message === "RECEPCION_NOT_PROCESSABLE") {
