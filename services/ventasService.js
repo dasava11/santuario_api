@@ -13,6 +13,11 @@ import {
   generateCacheKey,
 } from "./cacheService.js";
 
+import {
+  registrarMovimiento,
+  actualizarStockAtomico,
+} from "./inventarioServices.js";
+
 const { ventas, detalle_ventas, usuarios, productos, movimientos_inventario } =
   db;
 
@@ -251,9 +256,13 @@ const crearVenta = async (datosVenta, usuarioId) => {
       { transaction }
     );
 
-    // Crear detalles y actualizar stock
+    // ====================================================
+    // ✅ REFACTORIZACIÓN: Usar funciones centralizadas
+    // ====================================================
+
+    // Procesar cada producto de la venta
     for (const item of productosValidados) {
-      // Crear detalle de venta
+      // 1️⃣ Crear detalle de venta
       await detalle_ventas.create(
         {
           venta_id: nuevaVenta.id,
@@ -265,36 +274,29 @@ const crearVenta = async (datosVenta, usuarioId) => {
         { transaction }
       );
 
-      // Calcular nuevo stock
-      const nuevoStock = parseFloat(
-        (item.stock_actual - parseFloat(item.cantidad)).toFixed(3)
+      // 2️⃣ ✅ NUEVO: Actualizar stock de forma atómica
+      // Esto reemplaza el productos.update() anterior que NO era atómico
+      const productoActualizado = await actualizarStockAtomico(
+        item.producto_id,
+        parseFloat(item.cantidad),
+        "salida", // tipo_movimiento
+        transaction
       );
 
-      // Actualizar stock del producto
-      await productos.update(
-        {
-          stock_actual: nuevoStock,
-        },
-        {
-          where: { id: item.producto_id },
-          transaction,
-        }
-      );
-
-      // Registrar movimiento de inventario
-      await movimientos_inventario.create(
+      // 3️⃣ ✅ NUEVO: Registrar movimiento de forma centralizada
+      await registrarMovimiento(
         {
           producto_id: item.producto_id,
           tipo_movimiento: "salida",
           cantidad: parseFloat(item.cantidad),
-          stock_anterior: item.stock_actual,
-          stock_nuevo: nuevoStock,
-          referencia_id: nuevaVenta.id,
+          stock_anterior: item.stock_actual, // Del validarProductosYStock
+          stock_nuevo: productoActualizado.stock_actual,
           referencia_tipo: "venta",
+          referencia_id: nuevaVenta.id,
           usuario_id: usuarioId,
-          observaciones: `Venta ${numeroVenta}`,
+          observaciones: `Venta ${numeroVenta} - ${item.producto.nombre}`,
         },
-        { transaction }
+        transaction
       );
     }
 
@@ -306,6 +308,13 @@ const crearVenta = async (datosVenta, usuarioId) => {
     return nuevaVenta;
   } catch (error) {
     await transaction.rollback();
+
+    // ✅ MEJORAR: Manejo de errores más específico
+    if (error.message?.startsWith("STOCK_INSUFICIENTE:")) {
+      // El error ya viene formateado desde actualizarStockAtomico
+      throw error;
+    }
+
     throw error;
   }
 };
@@ -349,44 +358,42 @@ const anularVenta = async (id, usuarioAnulacionId, motivoAnulacion) => {
       throw new Error("VENTA_ANULACION_TIME_EXCEEDED");
     }
 
+    // ====================================================
+    // ✅ REFACTORIZACIÓN: Usar funciones centralizadas
+    // ====================================================
+
     // Revertir stock de todos los productos
     for (const detalle of venta.detalle_venta) {
       const producto = detalle.producto;
       const cantidadADevolver = parseFloat(detalle.cantidad);
       const stockActual = parseFloat(producto.stock_actual);
-      const nuevoStock = parseFloat(
-        (stockActual + cantidadADevolver).toFixed(3)
+
+      // 1️⃣ ✅ NUEVO: Actualizar stock de forma atómica (entrada por devolución)
+      const productoActualizado = await actualizarStockAtomico(
+        producto.id,
+        cantidadADevolver,
+        "entrada", // Devolución = entrada
+        transaction
       );
 
-      // Actualizar stock del producto
-      await productos.update(
-        {
-          stock_actual: nuevoStock,
-        },
-        {
-          where: { id: producto.id },
-          transaction,
-        }
-      );
-
-      // Registrar movimiento de inventario de reversión
-      await movimientos_inventario.create(
+      // 2️⃣ ✅ NUEVO: Registrar movimiento de reversión
+      await registrarMovimiento(
         {
           producto_id: producto.id,
           tipo_movimiento: "entrada",
           cantidad: cantidadADevolver,
           stock_anterior: stockActual,
-          stock_nuevo: nuevoStock,
-          referencia_id: venta.id,
+          stock_nuevo: productoActualizado.stock_actual,
           referencia_tipo: "venta",
+          referencia_id: venta.id,
           usuario_id: usuarioAnulacionId,
           observaciones: `Anulación de venta ${venta.numero_venta}: ${motivoAnulacion}`,
         },
-        { transaction }
+        transaction
       );
     }
 
-    // Marcar la venta como anulada (eliminación lógica)
+    // Marcar la venta como anulada
     await venta.update(
       {
         estado: "anulada",

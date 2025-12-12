@@ -281,6 +281,7 @@ const actualizarStock = asyncControllerWrapper(async (req, res) => {
 /**
  * Ajustar inventario (corrección directa de stock)
  */
+
 const ajustarInventario = asyncControllerWrapper(async (req, res) => {
   const { producto_id, nuevo_stock, observaciones } = req.body;
 
@@ -296,11 +297,13 @@ const ajustarInventario = asyncControllerWrapper(async (req, res) => {
       stock_anterior: result.stock_anterior,
       stock_nuevo: result.stock_nuevo,
       diferencia: result.diferencia,
+      diferencia_porcentaje: result.diferencia_porcentaje,
       tipo_ajuste: result.tipo_ajuste,
     });
 
     logger.business("Inventario ajustado", {
       producto_id,
+      producto_nombre: result.producto.nombre,
       tipo_ajuste: result.tipo_ajuste,
       diferencia: Math.abs(result.diferencia),
       usuario_id: req.user.id,
@@ -308,21 +311,28 @@ const ajustarInventario = asyncControllerWrapper(async (req, res) => {
 
     const mensaje = `Ajuste de inventario realizado exitosamente: ${
       result.tipo_ajuste
-    } de ${Math.abs(result.diferencia)} unidades`;
+    } de ${Math.abs(result.diferencia).toFixed(3)} unidades (${
+      result.diferencia_porcentaje
+    }% cambio)`;
 
-    res.json(
-      buildSuccessResponse(
-        {
-          mensaje,
-          stock_anterior: result.stock_anterior,
-          stock_nuevo: result.stock_nuevo,
-          diferencia: result.diferencia,
-          tipo_ajuste: result.tipo_ajuste,
-        },
-        metadata
-      )
-    );
+    // ✅ NUEVO: Incluir advertencia si queda stock bajo
+    const responseData = {
+      mensaje,
+      stock_anterior: result.stock_anterior,
+      stock_nuevo: result.stock_nuevo,
+      diferencia: result.diferencia,
+      diferencia_porcentaje: result.diferencia_porcentaje,
+      tipo_ajuste: result.tipo_ajuste,
+      producto: result.producto,
+    };
+
+    if (result.alerta_stock_bajo) {
+      responseData.advertencia = `⚠️ El stock del producto quedó por debajo del mínimo (${result.stock_nuevo} <= ${result.producto.stock_minimo})`;
+    }
+
+    res.json(buildSuccessResponse(responseData, metadata));
   } catch (error) {
+    // ===== MANEJO DE ERRORES EXISTENTES =====
     if (error.message === "PRODUCTO_NOT_FOUND") {
       return res.status(404).json(
         buildBusinessErrorResponse("Producto no encontrado o inactivo", {
@@ -336,6 +346,48 @@ const ajustarInventario = asyncControllerWrapper(async (req, res) => {
         buildBusinessErrorResponse("El nuevo stock es igual al stock actual", {
           tipo_error: "sin_cambios",
           sugerencia: "Proporcione un valor diferente al actual",
+        })
+      );
+    }
+
+    // ===== NUEVOS MANEJADORES DE ERRORES =====
+
+    // ✅ NUEVO: Stock negativo
+    if (error.message === "STOCK_NO_PUEDE_SER_NEGATIVO") {
+      return res.status(400).json(
+        buildBusinessErrorResponse("El stock no puede ser negativo", {
+          tipo_error: "stock_negativo",
+          valor_enviado: nuevo_stock,
+          sugerencia: "Ingrese un valor mayor o igual a 0",
+        })
+      );
+    }
+
+    // ✅ NUEVO: Stock excesivo
+    if (error.message.startsWith("STOCK_EXCESIVO:")) {
+      const [, maxStock, mensaje] = error.message.split(":");
+      return res.status(400).json(
+        buildBusinessErrorResponse(mensaje, {
+          tipo_error: "stock_excesivo",
+          valor_enviado: nuevo_stock,
+          maximo_permitido: parseInt(maxStock),
+          sugerencia: "Verifique que haya ingresado el valor correcto",
+        })
+      );
+    }
+
+    // ✅ NUEVO: Ajuste crítico sin justificación
+    if (error.message.startsWith("AJUSTE_CRITICO_REQUIERE_JUSTIFICACION:")) {
+      const [, porcentaje, mensaje] = error.message.split(":");
+      return res.status(400).json(
+        buildBusinessErrorResponse(mensaje, {
+          tipo_error: "ajuste_critico_sin_justificacion",
+          cambio_porcentaje: parseFloat(porcentaje),
+          observaciones_actuales: observaciones || null,
+          sugerencia:
+            "Proporcione observaciones detalladas (mínimo 20 caracteres) explicando el motivo del ajuste",
+          ejemplo:
+            "Inventario físico realizado el 18/01/2025, encontradas diferencias por mermas de productos vencidos",
         })
       );
     }

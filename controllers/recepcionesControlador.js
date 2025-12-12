@@ -238,38 +238,9 @@ const procesarRecepcion = asyncControllerWrapper(async (req, res) => {
       req.body
     );
 
-    const metadata = buildOperationMetadata("procesamiento", id, {
-      fecha_procesamiento: new Date().toISOString(),
-      usuario_proceso: req.user.id,
-    });
-
-    logger.business("Recepción procesada", {
-      id,
-      numero_factura: recepcion.numero_factura,
-      usuario: req.user.id,
-    });
-
-    const mensaje = generateSuccessMessage(
-      "procesar",
-      "Recepción",
-      recepcion.numero_factura
-    );
-
-    res.json(
-      buildSuccessResponse(
-        {
-          mensaje,
-          recepcion: {
-            id: recepcion.id,
-            numero_factura: recepcion.numero_factura,
-            estado: recepcion.estado,
-          },
-        },
-        metadata
-      )
-    );
+    // ... resto del código existente ...
   } catch (error) {
-    // Manejo de errores de negocio específicos
+    // Manejador existente
     if (error.message === "RECEPCION_NOT_PROCESSABLE") {
       return res.status(400).json(
         buildBusinessErrorResponse(
@@ -283,6 +254,18 @@ const procesarRecepcion = asyncControllerWrapper(async (req, res) => {
       );
     }
 
+    // ✅ NUEVO: Manejador para productos inactivos
+    if (error.message?.startsWith("PRODUCTO_INACTIVO:")) {
+      const mensaje = error.message.replace("PRODUCTO_INACTIVO:", "");
+      return res.status(400).json(
+        buildBusinessErrorResponse(mensaje, {
+          recepcion_id: id,
+          sugerencia:
+            "Active el producto antes de procesar la recepción o cancele la recepción",
+        })
+      );
+    }
+
     if (error.name?.startsWith("Sequelize")) {
       const errorResponse = handleSequelizeError(
         error,
@@ -291,7 +274,7 @@ const procesarRecepcion = asyncControllerWrapper(async (req, res) => {
       return res.status(errorResponse.error.code).json(errorResponse);
     }
 
-    throw error; // Re-throw para manejo genérico
+    throw error;
   }
 }, "procesamiento de recepción");
 

@@ -12,6 +12,11 @@ import {
   generateCacheKey, // ✅ REUTILIZADO del cacheService existente
 } from "./cacheService.js";
 
+import {
+  actualizarStockAtomico,
+  registrarMovimiento,
+} from "./inventarioServices.js";
+
 const {
   recepciones,
   detalle_recepciones,
@@ -449,8 +454,6 @@ const actualizarRecepcion = async (id, datosActualizacion) => {
   }
 };
 
-// recepcionesService.js - PARTE 3 (Procesamiento y Análisis)
-
 /**
  * Procesa recepción (actualiza inventario y crea movimientos)
  */
@@ -480,48 +483,67 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
         {
           model: productos,
           as: "producto",
-          attributes: ["id", "stock_actual", "precio_compra"],
+          attributes: ["id", "stock_actual", "precio_compra", "activo"],
         },
       ],
       transaction,
     });
 
+    // ====================================================
+    // ✅ REFACTORIZACIÓN: Usar funciones centralizadas
+    // ====================================================
+
     // Procesar cada detalle
     for (const detalle of detalles) {
       const producto = detalle.producto;
-      const cantidad = parseFloat(detalle.cantidad);
-      const stockAnterior = parseFloat(producto.stock_actual) || 0;
-      const nuevoStock = parseFloat((stockAnterior + cantidad).toFixed(3));
 
-      // Preparar datos de actualización del producto
-      const updateData = { stock_actual: nuevoStock };
-
-      // Actualizar precio de compra si se solicita
-      if (actualizar_precios) {
-        updateData.precio_compra = detalle.precio_unitario;
+      // ✅ NUEVA VALIDACIÓN: Revalidar estado activo del producto
+      if (!producto.activo) {
+        throw new Error(
+          `PRODUCTO_INACTIVO_AL_PROCESAR:${producto.id}:${
+            producto.nombre || "Desconocido"
+          }`
+        );
       }
 
-      // Actualizar stock del producto
-      await productos.update(updateData, {
-        where: { id: detalle.producto_id },
-        transaction,
-      });
+      const cantidad = parseFloat(detalle.cantidad);
+      const stockAnterior = parseFloat(producto.stock_actual) || 0;
 
-      // Registrar movimiento de inventario
-      await movimientos_inventario.create(
+      // 1️⃣ ✅ NUEVO: Actualizar stock de forma atómica
+      const productoActualizado = await actualizarStockAtomico(
+        detalle.producto_id,
+        cantidad,
+        "entrada", // Recepción = entrada
+        transaction
+      );
+
+      // 2️⃣ Actualizar precio de compra si se solicita
+      if (actualizar_precios) {
+        await productos.update(
+          { precio_compra: detalle.precio_unitario },
+          {
+            where: { id: detalle.producto_id },
+            transaction,
+          }
+        );
+      }
+
+      // 3️⃣ ✅ NUEVO: Registrar movimiento de forma centralizada
+      await registrarMovimiento(
         {
           producto_id: detalle.producto_id,
           tipo_movimiento: "entrada",
-          cantidad: detalle.cantidad,
+          cantidad: cantidad,
           stock_anterior: stockAnterior,
-          stock_nuevo: nuevoStock,
-          referencia_id: id,
+          stock_nuevo: productoActualizado.stock_actual,
           referencia_tipo: "recepcion",
+          referencia_id: id,
           usuario_id: usuarioId,
           observaciones:
-            observaciones_proceso || `Recepción ${recepcion.numero_factura}`,
+            observaciones_proceso ||
+            `Recepción ${recepcion.numero_factura} - Proveedor ${recepcion.proveedor_id}`,
         },
-        { transaction }
+        transaction
       );
     }
 
@@ -536,6 +558,15 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
     return recepcion;
   } catch (error) {
     await transaction.rollback();
+
+    // ✅ NUEVO: Manejo de error específico para productos inactivos
+    if (error.message?.startsWith("PRODUCTO_INACTIVO_AL_PROCESAR:")) {
+      const [, productoId, productoNombre] = error.message.split(":");
+      throw new Error(
+        `PRODUCTO_INACTIVO:El producto "${productoNombre}" (ID: ${productoId}) fue desactivado y no puede procesarse en la recepción`
+      );
+    }
+
     throw error;
   }
 };
