@@ -5,6 +5,8 @@ import db from "./models/index.js"; // Sequelize + modelos
 import routes from "./routes/index.js"; // Centralización de rutas
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
+import { trackPerformance } from "./middleware/performance.js";
+import { generalLimiter } from "./middleware/rateLimiters.js";
 
 dotenv.config();
 
@@ -37,6 +39,11 @@ app.use(
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+// Performance tracking (debe ir ANTES de las rutas)
+app.use(trackPerformance);
+
+// Rate limiting global (opcional, puedes aplicarlo solo a /api)
+app.use("/api", generalLimiter);
 
 // =========================
 // 📄 Swagger Config
