@@ -25,6 +25,15 @@ export default (sequelize) => {
       cantidad: {
         type: DataTypes.DECIMAL(10, 3),
         allowNull: false,
+        validate: {
+          min: {
+            args: [0.001],
+            msg: "La cantidad debe ser mayor a 0"
+          },
+          isDecimal: {
+            msg: "La cantidad debe ser un número decimal válido"
+          }
+        }
       },
       stock_anterior: {
         type: DataTypes.DECIMAL(10, 3),
@@ -63,7 +72,7 @@ export default (sequelize) => {
     {
       sequelize,
       tableName: "movimientos_inventario",
-      timestamps: false,
+      timestamps: true,
       indexes: [
         {
           name: "PRIMARY",
