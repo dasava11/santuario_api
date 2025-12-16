@@ -215,15 +215,81 @@ const validarProductosYStock = async (productosVenta, transaction) => {
   return { productosValidados, total: parseFloat(total.toFixed(2)) };
 };
 
+// =====================================================
+// GENERACIÓN SEGURA DE NÚMERO DE VENTA
+// =====================================================
+
 /**
- * Genera número de venta único
+ * Genera número de venta único con verificación de duplicados
+ * 
+ * Formato: V{YYYYMMDD}-{timestamp}{random}
+ * Ejemplo: V20241215-1734293847283abc4
+ * 
+ * ✅ MEJORAS:
+ * - Verificación dentro de transacción (previene race conditions)
+ * - Sufijo aleatorio adicional para evitar colisiones
+ * - Reintentos automáticos (máx 5)
+ * - Error explícito si no se logra generar
+ * 
+ * @param {Transaction} transaction - Transacción de Sequelize
+ * @returns {Promise<string>} Número de venta único
+ * @throws {Error} NO_SE_PUDO_GENERAR_NUMERO_VENTA_UNICO
  */
-const generarNumeroVenta = () => {
-  const fecha = new Date();
-  return `V${fecha.getFullYear()}${String(fecha.getMonth() + 1).padStart(
-    2,
-    "0"
-  )}${String(fecha.getDate()).padStart(2, "0")}-${Date.now()}`;
+const generarNumeroVentaSeguro = async (transaction) => {
+  const MAX_INTENTOS = 5;
+  let intentos = 0;
+
+  while (intentos < MAX_INTENTOS) {
+    try {
+      // Generar timestamp con precisión de milisegundos
+      const fecha = new Date();
+      const timestamp = Date.now();
+
+      // Agregar sufijo aleatorio de 4 caracteres (base36 = 0-9 + a-z)
+      const random = Math.random().toString(36).substring(2, 6);
+
+      // Formato: V{YYYYMMDD}-{timestamp}{random}
+      const numeroVenta = `V${fecha.getFullYear()}${String(fecha.getMonth() + 1).padStart(2, "0")}${String(fecha.getDate()).padStart(2, "0")}-${timestamp}${random}`;
+
+      // ✅ CRÍTICO: Verificar unicidad dentro de la transacción
+      const existe = await ventas.findOne({
+        where: { numero_venta: numeroVenta },
+        transaction,
+        // Solo SELECT, sin lock (lectura rápida)
+      });
+
+      if (!existe) {
+        // Log de auditoría
+        console.log(`✅ Número de venta generado: ${numeroVenta} (intento ${intentos + 1})`);
+        return numeroVenta;
+      }
+
+      // Si existe, incrementar contador e intentar de nuevo
+      intentos++;
+      console.warn(
+        `⚠️ Número de venta duplicado detectado: ${numeroVenta} (intento ${intentos}/${MAX_INTENTOS})`
+      );
+
+      // Esperar 1-5ms antes de reintentar (evitar colisiones en bucle)
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 5 + 1));
+
+    } catch (error) {
+      intentos++;
+      console.error(
+        `❌ Error generando número de venta (intento ${intentos}/${MAX_INTENTOS}):`,
+        error
+      );
+
+      if (intentos >= MAX_INTENTOS) {
+        throw error;
+      }
+    }
+  }
+
+  // Si llegamos aquí, no se pudo generar después de MAX_INTENTOS
+  const errorMsg = `No se pudo generar un número de venta único después de ${MAX_INTENTOS} intentos`;
+  console.error(`❌ ${errorMsg}`);
+  throw new Error("NO_SE_PUDO_GENERAR_NUMERO_VENTA_UNICO");
 };
 
 /**
@@ -235,16 +301,16 @@ const crearVenta = async (datosVenta, usuarioId) => {
   try {
     const { productos: productosVenta, metodo_pago = "efectivo" } = datosVenta;
 
-    // Validar productos y stock
+    // 1️⃣ Validar productos y stock
     const { productosValidados, total } = await validarProductosYStock(
       productosVenta,
       transaction
     );
 
-    // Generar número de venta único
-    const numeroVenta = generarNumeroVenta();
+    // 2️⃣ ✅ REFACTORIZADO: Generar número de venta único DENTRO de transacción
+    const numeroVenta = await generarNumeroVentaSeguro(transaction);
 
-    // Crear la venta
+    // 3️⃣ Crear la venta
     const nuevaVenta = await ventas.create(
       {
         numero_venta: numeroVenta,
@@ -260,7 +326,7 @@ const crearVenta = async (datosVenta, usuarioId) => {
     // ✅ REFACTORIZACIÓN: Usar funciones centralizadas
     // ====================================================
 
-    // Procesar cada producto de la venta
+    // 4️⃣ Procesar cada producto de la venta
     for (const item of productosValidados) {
       // 1️⃣ Crear detalle de venta
       await detalle_ventas.create(
@@ -302,12 +368,39 @@ const crearVenta = async (datosVenta, usuarioId) => {
 
     await transaction.commit();
 
+    // Log de auditoría de venta exitosa
+    console.log(
+      `✅ VENTA CREADA EXITOSAMENTE:\n` +
+      `   Número: ${numeroVenta}\n` +
+      `   ID: ${nuevaVenta.id}\n` +
+      `   Total: $${total.toFixed(2)}\n` +
+      `   Método: ${metodo_pago}\n` +
+      `   Productos: ${productosValidados.length}\n` +
+      `   Usuario: ${usuarioId}\n` +
+      `   Timestamp: ${new Date().toISOString()}`
+    );
+
     // Invalidar caché (cascada)
     await invalidateVentaProcesadaCache(nuevaVenta.id, numeroVenta);
 
     return nuevaVenta;
   } catch (error) {
     await transaction.rollback();
+
+    if (error.message === "NO_SE_PUDO_GENERAR_NUMERO_VENTA_UNICO") {
+      console.error(
+        `🚨 ERROR CRÍTICO: No se pudo generar número de venta único\n` +
+        `   Usuario: ${usuarioId}\n` +
+        `   Productos: ${datosVenta.productos?.length || 0}\n` +
+        `   Timestamp: ${new Date().toISOString()}\n` +
+        `   Acción requerida: Verificar carga del sistema`
+      );
+
+      // Re-throw con mensaje más amigable
+      throw new Error(
+        "SISTEMA_SOBRECARGADO:No se pudo procesar la venta. Intenta nuevamente en unos segundos."
+      );
+    }
 
     // ✅ MEJORAR: Manejo de errores más específico
     if (error.message?.startsWith("STOCK_INSUFICIENTE:")) {
@@ -527,6 +620,68 @@ const obtenerResumenVentas = async (filtros = {}) => {
 };
 
 // =====================================================
+// FUNCIÓN DE TESTING (DESARROLLO SOLAMENTE)
+// =====================================================
+
+/**
+ * ⚠️ SOLO PARA TESTING
+ * Prueba la generación de números de venta bajo carga
+ */
+const testGeneracionConcurrenteNumeroVenta = async (numVentas = 100) => {
+  console.log(`🧪 TEST: Generando ${numVentas} números de venta concurrentes...`);
+
+  const start = Date.now();
+  const promises = [];
+  const numerosGenerados = new Set();
+
+  for (let i = 0; i < numVentas; i++) {
+    promises.push(
+      (async () => {
+        const transaction = await sequelize.transaction();
+        try {
+          const numero = await generarNumeroVentaSeguro(transaction);
+          await transaction.commit();
+          return numero;
+        } catch (error) {
+          await transaction.rollback();
+          throw error;
+        }
+      })()
+    );
+  }
+
+  try {
+    const resultados = await Promise.all(promises);
+    resultados.forEach(num => numerosGenerados.add(num));
+
+    const duration = Date.now() - start;
+    const duplicados = resultados.length - numerosGenerados.size;
+
+    console.log(
+      `✅ TEST COMPLETADO:\n` +
+      `   Intentos: ${numVentas}\n` +
+      `   Exitosos: ${resultados.length}\n` +
+      `   Únicos: ${numerosGenerados.size}\n` +
+      `   Duplicados: ${duplicados}\n` +
+      `   Tiempo: ${duration}ms\n` +
+      `   Promedio: ${(duration / numVentas).toFixed(2)}ms/venta`
+    );
+
+    return {
+      success: duplicados === 0,
+      intentos: numVentas,
+      unicos: numerosGenerados.size,
+      duplicados,
+      tiempoTotal: duration,
+      tiempoPromedio: duration / numVentas,
+    };
+  } catch (error) {
+    console.error(`❌ TEST FALLIDO:`, error);
+    throw error;
+  }
+};
+
+// =====================================================
 // EXPORTACIONES
 // =====================================================
 export default {
@@ -543,5 +698,5 @@ export default {
 
   // Utilidades (para uso interno)
   validarProductosYStock,
-  generarNumeroVenta,
+  generarNumeroVentaSeguro,
 };

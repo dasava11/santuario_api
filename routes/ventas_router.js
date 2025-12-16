@@ -16,6 +16,13 @@ import { verifyToken, verifyRole } from "../middleware/auth.js";
 // Middleware de sanitización
 import { sanitizeSearch } from "../middleware/sanitizeSearch.js";
 
+// ✅ NUEVO: Rate limiters específicos de ventas
+import {
+  ventasWriteLimiter,
+  criticalVentaLimiter,
+  ventasReportLimiter,
+} from "../middleware/rateLimiters.js";
+
 // Validaciones específicas
 import {
   validateCreateVenta,
@@ -86,6 +93,8 @@ const router = express.Router();
  *         description: Parámetros de consulta inválidos
  *       401:
  *         description: No autorizado
+ *       429:
+ *         description: Demasiadas solicitudes
  */
 router.get(
   "/",
@@ -130,9 +139,12 @@ router.get(
  *         description: Parámetros de consulta inválidos
  *       401:
  *         description: No autorizado
+ *       429:
+ *         description: Límite de reportes excedido (20 cada 5 min)
  */
 router.get(
   "/resumen",
+  ventasReportLimiter,
   sanitizeSearch({
     queryFields: [],
     maxLength: 20,
@@ -189,9 +201,15 @@ router.get(
 // =====================================================
 /**
  * @swagger
- * /ventas:
+* /ventas:
  *   post:
  *     summary: Crear nueva venta
+ *     description: |
+ *       Crea una venta con validación de stock y actualización atómica de inventario.
+ *       
+ *       **Límites de Rate Limiting:**
+ *       - Máximo 40 ventas cada 10 minutos por cajero
+ *       - Diseñado para permitir picos de horas punta (4 ventas/min)
  *     tags: [Ventas]
  *     security:
  *       - bearerAuth: []
@@ -239,9 +257,12 @@ router.get(
  *         description: No autorizado
  *       403:
  *         description: Permisos insuficientes
+ *       429:
+ *         description: Límite de ventas excedido (40 cada 10 min)
  */
 router.post(
   "/",
+  ventasWriteLimiter,
   sanitizeSearch({
     bodyFields: [],
     maxLength: 0,
@@ -263,6 +284,17 @@ router.post(
  * /ventas/{id}:
  *   delete:
  *     summary: Anular venta (eliminación lógica con reversión de stock)
+ *     description: |
+ *       Anula una venta y revierte el inventario automáticamente.
+ *       
+ *       **Restricciones:**
+ *       - Solo ventas con menos de 24 horas pueden ser anuladas
+ *       - Requiere motivo de anulación (mínimo 10 caracteres)
+ *       - Solo roles: administrador, dueño
+ *       
+ *       **Límites de Rate Limiting:**
+ *       - Máximo 10 anulaciones cada 15 minutos
+ *       - Operación crítica con auditoría completa
  *     tags: [Ventas]
  *     security:
  *       - bearerAuth: []
@@ -300,9 +332,12 @@ router.post(
  *         description: No autorizado
  *       403:
  *         description: Permisos insuficientes
+ *       429:
+ *         description: Límite de anulaciones excedido (10 cada 15 min)
  */
 router.delete(
   "/:id",
+  criticalVentaLimiter,
   sanitizeSearch({
     paramFields: ["id"],
     bodyFields: ["motivo_anulacion"],
@@ -352,6 +387,10 @@ router.delete(
  *           type: string
  *           format: date-time
  *           description: Fecha y hora de la venta
+ *         updated_at:
+ *           type: string
+ *           format: date-time
+ *           description: Última actualización del registro
  *         fecha_anulacion:
  *           type: string
  *           format: date-time
@@ -365,6 +404,31 @@ router.delete(
  *           type: string
  *           nullable: true
  *           description: Motivo de la anulación
+ *
+ *     DetalleVenta:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *         venta_id:
+ *           type: integer
+ *         producto_id:
+ *           type: integer
+ *         cantidad:
+ *           type: number
+ *           format: float
+ *         precio_unitario:
+ *           type: number
+ *           format: float
+ *         subtotal:
+ *           type: number
+ *           format: float
+ *         created_at:
+ *           type: string
+ *           format: date-time
+ *         updated_at:
+ *           type: string
+ *           format: date-time
  *
  *     Pagination:
  *       type: object
@@ -381,6 +445,46 @@ router.delete(
  *         pages:
  *           type: integer
  *           description: Total de páginas
+ *
+ *     RateLimitInfo:
+ *       type: object
+ *       properties:
+ *         ventas_crear:
+ *           type: object
+ *           properties:
+ *             limite:
+ *               type: integer
+ *               example: 40
+ *             ventana:
+ *               type: string
+ *               example: "10 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Permite picos de horas punta"
+ *         ventas_anular:
+ *           type: object
+ *           properties:
+ *             limite:
+ *               type: integer
+ *               example: 10
+ *             ventana:
+ *               type: string
+ *               example: "15 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Operación crítica con auditoría"
+ *         ventas_reportes:
+ *           type: object
+ *           properties:
+ *             limite:
+ *               type: integer
+ *               example: 20
+ *             ventana:
+ *               type: string
+ *               example: "5 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Consultas computacionalmente costosas"
  */
 
 export default router;

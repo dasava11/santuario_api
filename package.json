@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "check:timestamps": "node check-timestamps.js",
+    "migrate:timestamps": "node migrate-all-timestamps.js",
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

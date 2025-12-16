@@ -126,12 +126,27 @@ export const CACHE_PREFIXES = {
 // =====================================================
 
 /**
- * Genera clave de caché consistente
- * @param {string} prefix - Prefijo de la clave
+ * Genera clave de caché consistente con parámetros ordenados
+ * 
+ * ✅ USO PRINCIPAL para queries complejas con múltiples parámetros
+ * 
+ * @param {string} prefix - Prefijo de la clave (usar CACHE_PREFIXES)
  * @param {Object} params - Parámetros para la clave
  * @returns {string} Clave de caché
+ * 
+ * @example
+ * // Para filtros complejos
+ * generateCacheKey(CACHE_PREFIXES.VENTAS_LIST, {
+ *   fecha_inicio: "2024-01-01",
+ *   fecha_fin: "2024-12-31",
+ *   metodo_pago: "efectivo",
+ *   page: 1,
+ *   limit: 20
+ * });
+ * // Resultado: "ventas:list:{"fecha_fin":"2024-12-31","fecha_inicio":"2024-01-01",...}"
  */
 export const generateCacheKey = (prefix, params = {}) => {
+  // Ordenar parámetros alfabéticamente para consistencia
   const sortedParams = Object.keys(params)
     .sort()
     .reduce((result, key) => {
@@ -143,15 +158,110 @@ export const generateCacheKey = (prefix, params = {}) => {
 };
 
 /**
- * 🔥 NUEVA FUNCIÓN: Genera clave simple para casos especiales
- * Útil cuando necesitas compatibilidad con strings manuales existentes
- * @param {string} prefix - Prefijo
+ * ✅ NUEVA: Genera clave simple para identificadores únicos
+ * 
+ * ✅ USO RECOMENDADO para:
+ * - Búsqueda por ID único (producto:id:123)
+ * - Búsqueda por campo único (usuario:email:user@example.com)
+ * - Casos donde NO hay múltiples parámetros
+ * 
+ * @param {string} prefix - Prefijo de la clave
  * @param {string|number} identifier - Identificador simple
  * @returns {string} Clave simple
+ * 
+ * @example
+ * // Para búsquedas por ID
+ * generateSimpleCacheKey("venta", 123);
+ * // Resultado: "venta:123"
+ * 
+ * generateSimpleCacheKey("usuario:email", "user@example.com");
+ * // Resultado: "usuario:email:user@example.com"
  */
 export const generateSimpleCacheKey = (prefix, identifier) => {
-  return `${prefix}:${identifier}`;
+  // Normalizar identifier (convertir a string y trim)
+  const normalizedId = String(identifier).trim();
+
+  if (!normalizedId) {
+    throw new Error(`CACHE_KEY_ERROR: Identifier cannot be empty for prefix "${prefix}"`);
+  }
+
+  return `${prefix}:${normalizedId}`;
 };
+
+/**
+ * ✅ NUEVA: Determina automáticamente qué función usar
+ * 
+ * Esta función INTELIGENTE decide:
+ * - Si params es objeto → usa generateCacheKey()
+ * - Si params es string/number → usa generateSimpleCacheKey()
+ * 
+ * @param {string} prefix - Prefijo de la clave
+ * @param {Object|string|number} params - Parámetros o identificador
+ * @returns {string} Clave de caché
+ * 
+ * @example
+ * // Con objeto (múltiples parámetros)
+ * smartCacheKey("ventas:list", { page: 1, limit: 20 });
+ * // Usa: generateCacheKey()
+ * 
+ * // Con número (ID único)
+ * smartCacheKey("venta", 123);
+ * // Usa: generateSimpleCacheKey()
+ * 
+ * // Con string (email, username, etc)
+ * smartCacheKey("usuario:email", "user@example.com");
+ * // Usa: generateSimpleCacheKey()
+ */
+export const smartCacheKey = (prefix, params) => {
+  // Si params es objeto no vacío → clave compleja
+  if (typeof params === "object" && params !== null && !Array.isArray(params)) {
+    return generateCacheKey(prefix, params);
+  }
+
+  // Si params es string, number, o boolean → clave simple
+  if (["string", "number", "boolean"].includes(typeof params)) {
+    return generateSimpleCacheKey(prefix, params);
+  }
+
+  // Fallback: si no es ninguno de los anteriores, error
+  throw new Error(
+    `CACHE_KEY_ERROR: Invalid params type for prefix "${prefix}". Expected object, string, number, or boolean.`
+  );
+};
+
+/*
+┌─────────────────────────────────────────────────────────────────────┐
+│ 🎯 GUÍA RÁPIDA: ¿Cuándo usar cada función?                         │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│ 1️⃣ generateCacheKey() - Para FILTROS COMPLEJOS                      │
+│    ✅ Usa cuando: Tienes múltiples parámetros                       │
+│    📝 Ejemplo:                                                      │
+│       generateCacheKey(CACHE_PREFIXES.VENTAS_LIST, {               │
+│         fecha_inicio: "2024-01-01",                                 │
+│         metodo_pago: "efectivo",                                    │
+│         page: 1                                                     │
+│       });                                                           │
+│                                                                     │
+│ 2️⃣ generateSimpleCacheKey() - Para IDENTIFICADORES ÚNICOS           │
+│    ✅ Usa cuando: Buscas por ID, email, username, código            │
+│    📝 Ejemplo:                                                      │
+│       generateSimpleCacheKey(CACHE_PREFIXES.VENTA, 123);           │
+│       generateSimpleCacheKey(CACHE_PREFIXES.USUARIO_EMAIL,         │
+│                              "user@example.com");                   │
+│                                                                     │
+│ 3️⃣ smartCacheKey() - AUTOMÁTICO (RECOMENDADO)                       │
+│    ✅ Usa cuando: No estás seguro cuál usar                         │
+│    📝 Ejemplo:                                                      │
+│       // Detecta automáticamente que es objeto → generateCacheKey()│
+│       smartCacheKey("ventas:list", { page: 1, limit: 20 });        │
+│                                                                     │
+│       // Detecta automáticamente que es número → generateSimple... │
+│       smartCacheKey("venta", 123);                                  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+*/
+
 
 // =====================================================
 // 🔹 OPERACIONES BÁSICAS
@@ -316,12 +426,13 @@ export const invalidateByPattern = async (pattern) => {
  * @param {string} username - Username del usuario (opcional)
  */
 export const invalidateAuthCache = async (userId, username = null) => {
-  // 🔥 CAMBIO CRÍTICO: Usar generateCacheKey en lugar de strings manuales
-  const keys = [generateCacheKey(CACHE_PREFIXES.AUTH_USER, { userId: userId })];
+  const keys = [
+    smartCacheKey(CACHE_PREFIXES.AUTH_USER, userId)
+  ];
 
   if (username) {
     keys.push(
-      generateCacheKey(CACHE_PREFIXES.AUTH_USERNAME, { username: username })
+      smartCacheKey(CACHE_PREFIXES.AUTH_USERNAME, username.toLowerCase())
     );
   }
 
@@ -377,20 +488,18 @@ export const invalidateProductCache = async (
   codigoBarras = null
 ) => {
   const keys = [
-    generateCacheKey(CACHE_PREFIXES.PRODUCTO_ID, { productoId: productoId }),
+    smartCacheKey(CACHE_PREFIXES.PRODUCTO_ID, productoId)
   ];
 
   if (codigoBarras) {
     keys.push(
-      generateCacheKey(CACHE_PREFIXES.PRODUCTO_BARCODE, {
-        codigoBarras: codigoBarras,
-      })
+      smartCacheKey(CACHE_PREFIXES.PRODUCTO_BARCODE, codigoBarras)
     );
   }
 
   const deleted = await invalidateKeys(keys);
 
-  // También invalidar listas de productos que podrían incluir este producto
+  // También invalidar listas de productos
   await invalidateByPattern(`${CACHE_PREFIXES.PRODUCTOS_LIST}:*`);
 
   return deleted;
@@ -564,28 +673,24 @@ export const invalidateUserCache = async (
   email = null
 ) => {
   const keys = [
-    generateCacheKey(CACHE_PREFIXES.USUARIO_ID, { userId: userId }),
+    smartCacheKey(CACHE_PREFIXES.USUARIO_ID, userId)
   ];
 
   if (username) {
     keys.push(
-      generateCacheKey(CACHE_PREFIXES.USUARIO_USERNAME, {
-        username: username.toLowerCase(),
-      })
+      smartCacheKey(CACHE_PREFIXES.USUARIO_USERNAME, username.toLowerCase())
     );
   }
 
   if (email) {
     keys.push(
-      generateCacheKey(CACHE_PREFIXES.USUARIO_EMAIL, {
-        email: email.toLowerCase(),
-      })
+      smartCacheKey(CACHE_PREFIXES.USUARIO_EMAIL, email.toLowerCase())
     );
   }
 
   const deleted = await invalidateKeys(keys);
 
-  // También invalidar listas que podrían incluir este usuario
+  // Invalidar listas
   await invalidateByPattern(`${CACHE_PREFIXES.USUARIOS_LIST}:*`);
   await invalidateByPattern(`${CACHE_PREFIXES.USUARIOS_SEARCH}:*`);
 
@@ -820,13 +925,14 @@ export const invalidateAllRecepcionesCache = async () => {
  * @param {string} numeroVenta - Número de venta (opcional)
  */
 export const invalidateVentaCache = async (ventaId, numeroVenta = null) => {
-  const keys = [generateCacheKey(CACHE_PREFIXES.VENTA, { ventaId: ventaId })];
+  const keys = [
+    // ✅ Usa smartCacheKey (detecta automáticamente que es número)
+    smartCacheKey(CACHE_PREFIXES.VENTA, ventaId)
+  ];
 
   if (numeroVenta) {
     keys.push(
-      generateCacheKey(CACHE_PREFIXES.VENTA_NUMERO, {
-        numeroVenta: numeroVenta,
-      })
+      smartCacheKey(CACHE_PREFIXES.VENTA_NUMERO, numeroVenta)
     );
   }
 
@@ -1078,3 +1184,132 @@ export const compareCacheKeyFormats = (prefix, params, manualString) => {
     simpleMatches: simple === manualString,
   };
 };
+
+// =====================================================
+// 📹 FUNCIÓN DE TESTING Y DEBUGGING
+// =====================================================
+
+/**
+ * ✅ NUEVA: Compara los 3 métodos de generación para debugging
+ * 
+ * @param {string} prefix - Prefijo a probar
+ * @param {*} params - Parámetros a probar
+ */
+export const debugCacheKeyComparison = (prefix, params) => {
+  console.log(`\n🔍 DEBUG: Comparación de métodos de cache key`);
+  console.log(`Prefix: "${prefix}"`);
+  console.log(`Params: ${JSON.stringify(params)}`);
+  console.log(`Tipo params: ${typeof params}`);
+  console.log(`───────────────────────────────────────────────────`);
+
+  try {
+    // Método 1: generateCacheKey (siempre)
+    let method1;
+    try {
+      method1 = generateCacheKey(
+        prefix,
+        typeof params === "object" ? params : { value: params }
+      );
+      console.log(`✅ generateCacheKey(): "${method1}"`);
+    } catch (e) {
+      console.log(`❌ generateCacheKey(): Error - ${e.message}`);
+    }
+
+    // Método 2: generateSimpleCacheKey (si no es objeto)
+    let method2;
+    try {
+      method2 =
+        typeof params === "object"
+          ? "N/A (params es objeto)"
+          : generateSimpleCacheKey(prefix, params);
+      console.log(`${typeof params === "object" ? "⚠️" : "✅"} generateSimpleCacheKey(): "${method2}"`);
+    } catch (e) {
+      console.log(`❌ generateSimpleCacheKey(): Error - ${e.message}`);
+    }
+
+    // Método 3: smartCacheKey (automático)
+    let method3;
+    try {
+      method3 = smartCacheKey(prefix, params);
+      console.log(`✅ smartCacheKey(): "${method3}"`);
+    } catch (e) {
+      console.log(`❌ smartCacheKey(): Error - ${e.message}`);
+    }
+
+    console.log(`───────────────────────────────────────────────────`);
+    console.log(`📊 RECOMENDACIÓN:`);
+
+    if (typeof params === "object" && params !== null) {
+      console.log(`   ✅ Usar: generateCacheKey() o smartCacheKey()`);
+      console.log(`   ❌ NO usar: generateSimpleCacheKey()`);
+    } else {
+      console.log(`   ✅ Usar: generateSimpleCacheKey() o smartCacheKey()`);
+      console.log(`   ⚠️ Evitar: generateCacheKey() (innecesariamente complejo)`);
+    }
+
+    return { method1, method2, method3 };
+  } catch (error) {
+    console.error(`❌ Error en comparación:`, error);
+    return null;
+  }
+};
+
+/**
+ * ✅ NUEVA: Ejecuta tests de consistencia en cache keys
+ */
+export const runCacheKeyConsistencyTests = () => {
+  console.log(`\n🧪 EJECUTANDO TESTS DE CONSISTENCIA DE CACHE KEYS\n`);
+
+  const tests = [
+    {
+      nombre: "Venta por ID (número)",
+      prefix: "venta",
+      params: 123,
+      esperado: "venta:123",
+    },
+    {
+      nombre: "Usuario por email (string)",
+      prefix: "usuario:email",
+      params: "user@example.com",
+      esperado: "usuario:email:user@example.com",
+    },
+    {
+      nombre: "Ventas con filtros (objeto)",
+      prefix: "ventas:list",
+      params: { page: 1, limit: 20, estado: "activa" },
+      esperado: 'ventas:list:{"estado":"activa","limit":20,"page":1}',
+    },
+  ];
+
+  let passed = 0;
+  let failed = 0;
+
+  tests.forEach((test, index) => {
+    console.log(`\nTest ${index + 1}: ${test.nombre}`);
+    try {
+      const resultado = smartCacheKey(test.prefix, test.params);
+      const success = resultado === test.esperado;
+
+      if (success) {
+        console.log(`   ✅ PASS`);
+        console.log(`   Resultado: "${resultado}"`);
+        passed++;
+      } else {
+        console.log(`   ❌ FAIL`);
+        console.log(`   Esperado:  "${test.esperado}"`);
+        console.log(`   Obtenido:  "${resultado}"`);
+        failed++;
+      }
+    } catch (error) {
+      console.log(`   ❌ ERROR: ${error.message}`);
+      failed++;
+    }
+  });
+
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`RESULTADOS: ${passed} passed, ${failed} failed`);
+  console.log(`${"=".repeat(50)}\n`);
+
+  return { passed, failed, total: tests.length };
+};
+
