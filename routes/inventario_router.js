@@ -32,6 +32,12 @@ import {
   validateDateRange,
 } from "../validations/inventario_validations.js";
 
+import {
+  inventoryWriteLimiter,
+  criticalAdjustLimiter,
+  reportLimiter,
+} from "../middlewares/rateLimiters.js";
+
 const router = express.Router();
 
 // =====================================================
@@ -189,6 +195,7 @@ router.get(
   }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
+  reportLimiter,
   obtenerResumenInventario
 );
 
@@ -221,6 +228,7 @@ router.get(
   }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
+  reportLimiter,
   obtenerValorInventario
 );
 
@@ -261,6 +269,7 @@ router.get(
   }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
+  reportLimiter,
   validateGetEstadisticasQuery,
   obtenerEstadisticasMovimientos
 );
@@ -319,6 +328,7 @@ router.get(
     removeDangerousChars: true,
   }),
   verifyToken,
+  reportLimiter,
   validateProductoId,
   validateGetReporteProductoQuery,
   validateDateRange,
@@ -406,6 +416,7 @@ router.patch(
   }),
   verifyToken,
   verifyRole(["administrador", "dueño", "cajero"]),
+  inventoryWriteLimiter,
   validateStockId,
   validateActualizarStock,
   actualizarStock
@@ -475,6 +486,7 @@ router.post(
   }),
   verifyToken,
   verifyRole(["administrador", "dueño"]),
+  criticalAdjustLimiter,
   validateAjustarInventario,
   ajustarInventario
 );
