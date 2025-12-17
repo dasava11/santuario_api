@@ -85,36 +85,85 @@ const validateGetEstadisticasQuery = validateSource(getEstadisticas, "query", {
 const validateDateRange = (req, res, next) => {
   const { fecha_inicio, fecha_fin } = req.query;
 
-  if (fecha_inicio && fecha_fin) {
-    const inicio = new Date(fecha_inicio);
-    const fin = new Date(fecha_fin);
-    const hoy = new Date();
+  // ✅ NUEVO: Validar que si hay una fecha, debe haber ambas
+  if ((fecha_inicio && !fecha_fin) || (fecha_fin && !fecha_inicio)) {
+    return res.status(400).json({
+      success: false,
+      error: "Debes proporcionar tanto fecha_inicio como fecha_fin",
+      details: {
+        fecha_inicio: fecha_inicio || null,
+        fecha_fin: fecha_fin || null,
+      },
+      sugerencia:
+        "Usa ambas fechas para evitar consultas costosas sin límite temporal",
+    });
+  }
 
-    // Validar que las fechas no sean futuras
-    if (inicio > hoy || fin > hoy) {
-      return res.status(400).json({
-        success: false,
-        error: "Las fechas no pueden ser futuras",
-        details: {
-          fecha_inicio: fecha_inicio,
-          fecha_fin: fecha_fin,
-          fecha_actual: hoy.toISOString().split("T")[0],
-        },
-      });
-    }
+  // Si no hay fechas, continuar (query sin filtro de fechas es válido)
+  if (!fecha_inicio && !fecha_fin) {
+    return next();
+  }
 
-    // Validar que el rango no sea mayor a 1 año
-    const unAnio = 365 * 24 * 60 * 60 * 1000;
-    if (fin - inicio > unAnio) {
-      return res.status(400).json({
-        success: false,
-        error: "El rango de fechas no puede ser mayor a 1 año",
-        details: {
-          dias_solicitados: Math.ceil((fin - inicio) / (24 * 60 * 60 * 1000)),
-          maximo_permitido: 365,
-        },
-      });
-    }
+  // Si llegamos aquí, ambas fechas existen
+  const inicio = new Date(fecha_inicio);
+  const fin = new Date(fecha_fin);
+  const hoy = new Date();
+  hoy.setHours(23, 59, 59, 999); // Final del día de hoy
+
+  // ✅ NUEVO: Validar formatos de fecha inválidos
+  if (isNaN(inicio.getTime()) || isNaN(fin.getTime())) {
+    return res.status(400).json({
+      success: false,
+      error: "Formato de fecha inválido",
+      details: {
+        fecha_inicio,
+        fecha_fin,
+        formato_esperado: "YYYY-MM-DD",
+      },
+      ejemplo: "2025-01-15",
+    });
+  }
+
+  // ✅ NUEVO: Validar que inicio <= fin
+  if (inicio > fin) {
+    return res.status(400).json({
+      success: false,
+      error: "La fecha de inicio debe ser menor o igual a la fecha de fin",
+      details: {
+        fecha_inicio,
+        fecha_fin,
+        dias_diferencia: Math.ceil((inicio - fin) / (24 * 60 * 60 * 1000)),
+      },
+    });
+  }
+
+  // Validar que las fechas no sean futuras
+  if (inicio > hoy || fin > hoy) {
+    return res.status(400).json({
+      success: false,
+      error: "Las fechas no pueden ser futuras",
+      details: {
+        fecha_inicio,
+        fecha_fin,
+        fecha_actual: new Date().toISOString().split("T")[0],
+      },
+    });
+  }
+
+  // Validar que el rango no sea mayor a 1 año
+  const unAnio = 365 * 24 * 60 * 60 * 1000;
+  const rangoMs = fin - inicio;
+
+  if (rangoMs > unAnio) {
+    return res.status(400).json({
+      success: false,
+      error: "El rango de fechas no puede ser mayor a 1 año",
+      details: {
+        dias_solicitados: Math.ceil(rangoMs / (24 * 60 * 60 * 1000)),
+        maximo_permitido: 365,
+      },
+      sugerencia: "Divide tu consulta en períodos más pequeños",
+    });
   }
 
   next();

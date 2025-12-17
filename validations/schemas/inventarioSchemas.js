@@ -19,7 +19,13 @@ export const ajustarInventario = Joi.object({
   nuevo_stock: Joi.number()
     .min(0)
     .max(1000000)
-    .precision(3)
+    .custom((value, helpers) => {
+      const decimals = (value.toString().split(".")[1] || "").length;
+      if (decimals > 3) {
+        return helpers.error("number.precision", { limit: 3 });
+      }
+      return value;
+    })
     .required()
     .messages({
       "number.base": "El nuevo stock debe ser un número",
@@ -130,11 +136,12 @@ export const getReporteProducto = Joi.object({
       "La fecha de fin debe ser posterior o igual a la fecha de inicio",
   }),
 
-  limit: Joi.number().integer().min(1).max(1000).default(50).messages({
+  limit: Joi.number().integer().min(1).max(500).default(50).messages({
     "number.base": "El límite debe ser un número",
     "number.integer": "El límite debe ser un número entero",
     "number.min": "El límite debe ser mayor a 0",
-    "number.max": "El límite no puede ser mayor a 1000",
+    "number.max":
+      "El límite no puede ser mayor a 500 (para reportes grandes usa paginación)",
   }),
 });
 
