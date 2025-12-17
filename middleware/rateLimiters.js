@@ -80,13 +80,14 @@ export const criticalAdjustLimiter = rateLimit({
   handler: (req, res) => {
     console.error(
       `🚨 AJUSTE CRÍTICO BLOQUEADO:\n` +
-      `   Usuario: ${req.user?.id} (${req.user?.nombre} ${req.user?.apellido})\n` +
-      `   IP: ${req.ip}\n` +
-      `   Intentó: ${req.body?.producto_id
-        ? `Ajustar producto ${req.body.producto_id}`
-        : "Ajuste masivo"
-      }\n` +
-      `   Timestamp: ${new Date().toISOString()}`
+        `   Usuario: ${req.user?.id} (${req.user?.nombre} ${req.user?.apellido})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Intentó: ${
+          req.body?.producto_id
+            ? `Ajustar producto ${req.body.producto_id}`
+            : "Ajuste masivo"
+        }\n` +
+        `   Timestamp: ${new Date().toISOString()}`
     );
 
     res.status(429).json({
@@ -154,7 +155,7 @@ export const loginLimiter = rateLimit({
 /**
  * Rate limiter para CREAR VENTAS
  * Límite: 40 ventas por 10 minutos por usuario
- * 
+ *
  * Contexto del negocio:
  * - 2 cajeros activos
  * - ~600 clientes/día = ~25 clientes/hora por cajero
@@ -174,16 +175,20 @@ export const ventasWriteLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => {
     // Identificar por usuario (cajero)
-    return req.user ? `ventas_write_user_${req.user.id}` : `ventas_ip_${req.ip}`;
+    return req.user
+      ? `ventas_write_user_${req.user.id}`
+      : `ventas_ip_${req.ip}`;
   },
   handler: (req, res) => {
     console.warn(
       `⚠️ LÍMITE DE VENTAS EXCEDIDO:\n` +
-      `   Cajero: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id})\n` +
-      `   IP: ${req.ip}\n` +
-      `   Intentó crear venta con ${req.body?.productos?.length || 0} productos\n` +
-      `   Total: ${req.body?.total || "N/A"}\n` +
-      `   Timestamp: ${new Date().toISOString()}`
+        `   Cajero: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Intentó crear venta con ${
+          req.body?.productos?.length || 0
+        } productos\n` +
+        `   Total: ${req.body?.total || "N/A"}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
     );
 
     res.status(429).json({
@@ -208,7 +213,7 @@ export const ventasWriteLimiter = rateLimit({
 /**
  * Rate limiter CRÍTICO para ANULAR VENTAS
  * Límite: 10 anulaciones por 15 minutos por usuario
- * 
+ *
  * Contexto del negocio:
  * - Anulaciones son operaciones sensibles
  * - Requieren autorización (solo admin/dueño)
@@ -238,12 +243,12 @@ export const criticalVentaLimiter = rateLimit({
 
     console.error(
       `🚨 ANULACIÓN DE VENTA BLOQUEADA POR RATE LIMIT:\n` +
-      `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id}, Rol: ${req.user?.rol})\n` +
-      `   IP: ${req.ip}\n` +
-      `   Venta ID: ${ventaId}\n` +
-      `   Motivo: ${motivo || "No proporcionado"}\n` +
-      `   Timestamp: ${new Date().toISOString()}\n` +
-      `   ⚠️ ALERTA: Posible patrón anormal de anulaciones`
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id}, Rol: ${req.user?.rol})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Venta ID: ${ventaId}\n` +
+        `   Motivo: ${motivo || "No proporcionado"}\n` +
+        `   Timestamp: ${new Date().toISOString()}\n` +
+        `   ⚠️ ALERTA: Posible patrón anormal de anulaciones`
     );
 
     res.status(429).json({
@@ -255,7 +260,8 @@ export const criticalVentaLimiter = rateLimit({
       contexto: {
         limite: 10,
         ventana: "15 minutos",
-        razon: "Prevención de errores masivos y auditoría de operaciones críticas",
+        razon:
+          "Prevención de errores masivos y auditoría de operaciones críticas",
       },
       sugerencia:
         "Si necesitas anular múltiples ventas, contacta al supervisor o administrador del sistema",
@@ -270,7 +276,7 @@ export const criticalVentaLimiter = rateLimit({
 /**
  * Rate limiter para CONSULTAS DE RESUMEN DE VENTAS
  * Límite: 20 consultas por 5 minutos por usuario
- * 
+ *
  * Contexto:
  * - Consultas de resumen son computacionalmente costosas
  * - Involucran agregaciones y joins complejos
@@ -294,10 +300,10 @@ export const ventasReportLimiter = rateLimit({
   handler: (req, res) => {
     console.warn(
       `⚠️ LÍMITE DE REPORTES DE VENTAS EXCEDIDO:\n` +
-      `   Usuario: ${req.user?.id}\n` +
-      `   Endpoint: ${req.path}\n` +
-      `   Filtros: ${JSON.stringify(req.query)}\n` +
-      `   Timestamp: ${new Date().toISOString()}`
+        `   Usuario: ${req.user?.id}\n` +
+        `   Endpoint: ${req.path}\n` +
+        `   Filtros: ${JSON.stringify(req.query)}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
     );
 
     res.status(429).json({
@@ -336,6 +342,206 @@ INVENTARIO AJUSTES (criticalAdjustLimiter):
 - 15 ajustes / 15 min = 1 ajuste/min
 - Contexto: Ajustes son correcciones manuales, no operaciones rutinarias
 - Límite razonable para auditoría sin bloquear operación normal
+*/
+
+// =====================================================
+// 📦 RATE LIMITERS PARA RECEPCIONES
+// =====================================================
+
+/**
+ * Rate limiter para CREAR RECEPCIONES
+ * Límite: 30 recepciones por 10 minutos por usuario
+ *
+ * Contexto del negocio:
+ * - Supermercado con ~100 proveedores
+ * - Recepciones promedio: 2-5 por día = ~0.2 recepciones/hora
+ * - 30 recepciones en 10 min permite entrada masiva sin saturar sistema
+ * - Protege contra errores de entrada duplicada
+ */
+export const recepcionesWriteLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutos
+  max: 30, // 30 recepciones
+  message: {
+    error: "Demasiadas recepciones creadas en poco tiempo",
+    tipo: "recepciones_write_limit",
+    retry_after_seconds: 600,
+    sugerencia: "Espera unos minutos antes de crear más recepciones",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Identificar por usuario (empleado responsable)
+    return req.user
+      ? `recepciones_write_user_${req.user.id}`
+      : `recepciones_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE RECEPCIONES EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Intentó crear recepción con ${
+          req.body?.productos?.length || 0
+        } productos\n` +
+        `   Total factura: ${req.body?.total || "N/A"}\n` +
+        `   Proveedor ID: ${req.body?.proveedor_id || "N/A"}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Límite de recepciones excedido temporalmente",
+      detalles:
+        "Has creado demasiadas recepciones en los últimos 10 minutos (máximo: 30)",
+      retry_after_seconds: 600,
+      tipo: "recepciones_rate_limit",
+      contexto: {
+        limite: 30,
+        ventana: "10 minutos",
+        usuario: req.user?.id || null,
+      },
+      sugerencia: "Verifica si hay recepciones duplicadas antes de continuar",
+    });
+  },
+  skip: (req) => {
+    // Permitir ilimitado para procesos automáticos del sistema
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter CRÍTICO para PROCESAR RECEPCIONES
+ * Límite: 15 procesamientos cada 15 minutos por usuario
+ *
+ * Contexto del negocio:
+ * - Procesar recepción actualiza inventario masivamente (operación crítica)
+ * - Requiere verificación física de mercancía
+ * - 15 procesamientos en 15 min = ritmo razonable de verificación
+ * - Protege contra procesamiento accidental múltiple
+ */
+export const criticalRecepcionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 15, // Solo 15 procesamientos
+  message: {
+    error: "Demasiados procesamientos de recepciones",
+    tipo: "recepciones_procesamiento_limit",
+    retry_after_seconds: 900,
+    sugerencia:
+      "Los procesamientos masivos requieren supervisión del administrador",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `recepciones_procesar_user_${req.user.id}`
+      : `recepciones_procesar_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    const recepcionId = req.params.id;
+    const observaciones = req.body?.observaciones_proceso;
+    const actualizarPrecios = req.body?.actualizar_precios;
+
+    console.error(
+      `🚨 PROCESAMIENTO DE RECEPCIÓN BLOQUEADO POR RATE LIMIT:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id}, Rol: ${req.user?.rol})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Recepción ID: ${recepcionId}\n` +
+        `   Actualizar precios: ${
+          actualizarPrecios !== false ? "Sí" : "No"
+        }\n` +
+        `   Observaciones: ${observaciones || "No proporcionadas"}\n` +
+        `   Timestamp: ${new Date().toISOString()}\n` +
+        `   ⚠️ ALERTA: Posible patrón anormal de procesamientos`
+    );
+
+    res.status(429).json({
+      error: "Límite de procesamientos de recepciones excedido",
+      detalles:
+        "Solo se permiten 15 procesamientos cada 15 minutos por razones de seguridad",
+      retry_after_seconds: 900,
+      tipo: "critical_procesamiento_limit",
+      contexto: {
+        limite: 15,
+        ventana: "15 minutos",
+        razon:
+          "Prevención de errores masivos en inventario y auditoría de operaciones críticas",
+      },
+      sugerencia:
+        "Si necesitas procesar múltiples recepciones, contacta al supervisor o administrador del sistema",
+    });
+  },
+  skip: (req) => {
+    // Permitir ilimitado solo para rol "sistema" (procesos automáticos)
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter para CONSULTAS DE ESTADÍSTICAS DE RECEPCIONES
+ * Límite: 20 consultas por 5 minutos por usuario
+ *
+ * Contexto:
+ * - Consultas de estadísticas son computacionalmente costosas
+ * - Involucran agregaciones y joins complejos (proveedores, productos)
+ * - Previene abuso de reportes pesados
+ */
+export const recepcionesReportLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutos
+  max: 20, // 20 consultas de reporte
+  message: {
+    error: "Demasiadas consultas de estadísticas de recepciones",
+    tipo: "recepciones_report_limit",
+    retry_after_seconds: 300,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `recepciones_report_user_${req.user.id}`
+      : `recepciones_report_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE REPORTES DE RECEPCIONES EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.id}\n` +
+        `   Endpoint: ${req.path}\n` +
+        `   Filtros: ${JSON.stringify(req.query)}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Demasiadas consultas de reportes en poco tiempo",
+      detalles: "Límite de 20 consultas cada 5 minutos",
+      retry_after_seconds: 300,
+      tipo: "report_rate_limit",
+      sugerencia: "Espera unos minutos antes de generar más reportes",
+    });
+  },
+});
+
+// =====================================================
+// 📊 DOCUMENTACIÓN DE LÍMITES POR CONTEXTO DE NEGOCIO
+// =====================================================
+
+/*
+JUSTIFICACIÓN DE LÍMITES PARA RECEPCIONES DE SUPERMERCADO:
+
+CREAR RECEPCIONES (recepcionesWriteLimiter):
+- 30 recepciones / 10 min = 3 recepciones/min
+- Contexto: ~100 proveedores, 2-5 recepciones/día = 0.008 recepciones/min promedio
+- Permite picos de hasta 375x el promedio (muy generoso para entrada masiva)
+- Protege contra errores de duplicación accidental
+
+PROCESAR RECEPCIONES (criticalRecepcionLimiter):
+- 15 procesamientos / 15 min = 1 procesamiento/min
+- Contexto: Procesamiento requiere verificación física de mercancía
+- Actualiza inventario masivamente (operación crítica)
+- Límite razonable para operación normal con supervisión
+
+ESTADÍSTICAS (recepcionesReportLimiter):
+- 20 consultas / 5 min = 4 consultas/min
+- Contexto: Reportes son para análisis, no operaciones en tiempo real
+- Previene sobrecarga del servidor por dashboards mal configurados
+- Queries pesados con agregaciones y joins múltiples
 */
 
 // =====================================================

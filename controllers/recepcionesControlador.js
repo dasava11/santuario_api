@@ -247,6 +247,21 @@ const procesarRecepcion = asyncControllerWrapper(async (req, res) => {
       id,
       numero_factura: recepcion.numero_factura,
       usuario: req.user.id,
+      // Incluir información de advertencias
+      ...(resultado.advertencias && {
+        advertencias: resultado.advertencias,
+      }),
+    });
+
+    //  Log mejorado con contexto de advertencias
+    logger.business("Recepción procesada", {
+      id,
+      numero_factura: resultado.recepcion.numero_factura,
+      usuario: req.user.id,
+      // Incluir advertencias en log
+      ...(resultado.advertencias && {
+        productos_inactivos: resultado.advertencias.productos_inactivos.length,
+      }),
     });
 
     const mensaje = generateSuccessMessage(
@@ -254,6 +269,26 @@ const procesarRecepcion = asyncControllerWrapper(async (req, res) => {
       "Recepción",
       recepcion.numero_factura
     );
+
+    // Respuesta con advertencias si existen
+    const responseData = {
+      mensaje,
+      recepcion: {
+        id: resultado.recepcion.id,
+        numero_factura: resultado.recepcion.numero_factura,
+        estado: resultado.recepcion.estado,
+      },
+      // Incluir advertencias en respuesta
+      ...(resultado.advertencias && {
+        advertencias: {
+          tipo: "productos_inactivos",
+          mensaje: resultado.advertencias.mensaje,
+          productos: resultado.advertencias.productos_inactivos,
+          accion_recomendada:
+            "Revisar inventario y considerar reactivar productos si hay stock disponible",
+        },
+      }),
+    };
 
     res.json(
       buildSuccessResponse(
@@ -280,18 +315,6 @@ const procesarRecepcion = asyncControllerWrapper(async (req, res) => {
               "La recepción debe estar en estado 'pendiente' para procesarse",
           }
         )
-      );
-    }
-
-    // ✅ NUEVO: Manejador para productos inactivos
-    if (error.message?.startsWith("PRODUCTO_INACTIVO:")) {
-      const mensaje = error.message.replace("PRODUCTO_INACTIVO:", "");
-      return res.status(400).json(
-        buildBusinessErrorResponse(mensaje, {
-          recepcion_id: id,
-          sugerencia:
-            "Active el producto antes de procesar la recepción o cancele la recepción",
-        })
       );
     }
 

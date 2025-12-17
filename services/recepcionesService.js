@@ -355,6 +355,27 @@ const crearRecepcion = async (datosRecepcion, usuarioId) => {
       productos: productosRecepcion,
     } = datosRecepcion;
 
+    // ✅ NUEVA VALIDACIÓN: Advertencia para fechas antiguas (no bloquea)
+    const fechaRecepcion = new Date(fecha_recepcion);
+    const hace7Dias = new Date();
+    hace7Dias.setDate(hace7Dias.getDate() - 7);
+
+    if (fechaRecepcion < hace7Dias) {
+      const diasAntiguedad = Math.floor(
+        (new Date() - fechaRecepcion) / (1000 * 60 * 60 * 24)
+      );
+
+      console.warn(
+        `⚠️ RECEPCIÓN CON FECHA ANTIGUA:\n` +
+          `   Fecha recepción: ${fecha_recepcion}\n` +
+          `   Antigüedad: ${diasAntiguedad} días\n` +
+          `   Proveedor ID: ${proveedor_id}\n` +
+          `   Factura: ${numero_factura}\n` +
+          `   Usuario: ${usuarioId}\n` +
+          `   Acción: Permitir creación (validación en middleware ya pasó)`
+      );
+    }
+
     // Validar que el proveedor existe y está activo
     await validarProveedor(proveedor_id, transaction);
 
@@ -404,6 +425,19 @@ const crearRecepcion = async (datosRecepcion, usuarioId) => {
 
     // Invalidar caché
     await invalidateRecepcionesListCache();
+
+    // ✅ NUEVO: Log de auditoría mejorado
+    console.log(
+      `✅ RECEPCIÓN CREADA:\n` +
+        `   ID: ${nuevaRecepcion.id}\n` +
+        `   Factura: ${numero_factura}\n` +
+        `   Proveedor: ${proveedor_id}\n` +
+        `   Fecha: ${fecha_recepcion}\n` +
+        `   Total productos: ${productosValidados.length}\n` +
+        `   Valor total: $${total}\n` +
+        `   Usuario: ${usuarioId}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
 
     return nuevaRecepcion;
   } catch (error) {
@@ -483,33 +517,57 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
         {
           model: productos,
           as: "producto",
-          attributes: ["id", "stock_actual", "precio_compra", "activo"],
+          attributes: [
+            "id",
+            "nombre",
+            "stock_actual",
+            "precio_compra",
+            "activo",
+          ],
         },
       ],
       transaction,
     });
 
     // ====================================================
-    // ✅ REFACTORIZACIÓN: Usar funciones centralizadas
+    // ✅ NUEVA LÓGICA: Validar productos inactivos con advertencia
     // ====================================================
+
+    const productosInactivos = [];
+    let observacionesFinales = observaciones_proceso || "";
 
     // Procesar cada detalle
     for (const detalle of detalles) {
       const producto = detalle.producto;
-
-      // ✅ NUEVA VALIDACIÓN: Revalidar estado activo del producto
-      if (!producto.activo) {
-        throw new Error(
-          `PRODUCTO_INACTIVO_AL_PROCESAR:${producto.id}:${
-            producto.nombre || "Desconocido"
-          }`
-        );
-      }
-
       const cantidad = parseFloat(detalle.cantidad);
       const stockAnterior = parseFloat(producto.stock_actual) || 0;
 
-      // 1️⃣ ✅ NUEVO: Actualizar stock de forma atómica
+      // ✅ CAMBIO CRÍTICO: Advertencia en lugar de bloqueo
+      if (!producto.activo) {
+        console.warn(
+          `⚠️ PRODUCTO INACTIVO SIENDO PROCESADO EN RECEPCIÓN:\n` +
+            `   Producto: ${producto.nombre} (ID: ${producto.id})\n` +
+            `   Recepción: ${recepcion.numero_factura}\n` +
+            `   Stock actual: ${stockAnterior}\n` +
+            `   Cantidad a recibir: ${cantidad}\n` +
+            `   Razón: Mercancía física ya recibida, producto desactivado después\n` +
+            `   Acción: Procesar de todos modos y agregar advertencia\n` +
+            `   Usuario: ${usuarioId}\n` +
+            `   Timestamp: ${new Date().toISOString()}`
+        );
+
+        // Agregar a lista de advertencias
+        productosInactivos.push({
+          id: producto.id,
+          nombre: producto.nombre,
+          cantidad: cantidad,
+        });
+
+        // Agregar advertencia a observaciones
+        observacionesFinales += ` [ADVERTENCIA: Producto "${producto.nombre}" procesado estando inactivo]`;
+      }
+
+      // 1️⃣ ✅ Actualizar stock de forma atómica (reutiliza función centralizada)
       const productoActualizado = await actualizarStockAtomico(
         detalle.producto_id,
         cantidad,
@@ -528,7 +586,7 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
         );
       }
 
-      // 3️⃣ ✅ NUEVO: Registrar movimiento de forma centralizada
+      // 3️⃣ ✅ Registrar movimiento de forma centralizada
       await registrarMovimiento(
         {
           producto_id: detalle.producto_id,
@@ -540,7 +598,7 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
           referencia_id: id,
           usuario_id: usuarioId,
           observaciones:
-            observaciones_proceso ||
+            observacionesFinales.trim() ||
             `Recepción ${recepcion.numero_factura} - Proveedor ${recepcion.proveedor_id}`,
         },
         transaction
@@ -548,25 +606,46 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
     }
 
     // Actualizar estado de la recepción
-    await recepcion.update({ estado: "procesada" }, { transaction });
+    await recepcion.update(
+      {
+        estado: "procesada",
+        // ✅ NUEVO: Guardar observaciones finales si hay advertencias
+        ...(productosInactivos.length > 0 && {
+          observaciones: (recepcion.observaciones || "") + observacionesFinales,
+        }),
+      },
+      { transaction }
+    );
 
     await transaction.commit();
 
     // Invalidar caché (incluye productos e inventario)
     await invalidateRecepcionProcesadaCache(id, recepcion.proveedor_id);
 
-    return recepcion;
-  } catch (error) {
-    await transaction.rollback();
-
-    // ✅ NUEVO: Manejo de error específico para productos inactivos
-    if (error.message?.startsWith("PRODUCTO_INACTIVO_AL_PROCESAR:")) {
-      const [, productoId, productoNombre] = error.message.split(":");
-      throw new Error(
-        `PRODUCTO_INACTIVO:El producto "${productoNombre}" (ID: ${productoId}) fue desactivado y no puede procesarse en la recepción`
+    // ✅ NUEVO: Log especial si hubo productos inactivos
+    if (productosInactivos.length > 0) {
+      console.warn(
+        `⚠️ RECEPCIÓN PROCESADA CON PRODUCTOS INACTIVOS:\n` +
+          `   Recepción: ${recepcion.numero_factura} (ID: ${id})\n` +
+          `   Total productos inactivos: ${productosInactivos.length}\n` +
+          `   Detalles: ${JSON.stringify(productosInactivos, null, 2)}\n` +
+          `   Recomendación: Revisar estado de productos y considerar reactivarlos si hay stock`
       );
     }
 
+    // ✅ NUEVO: Retornar información de advertencias
+    return {
+      recepcion,
+      advertencias:
+        productosInactivos.length > 0
+          ? {
+              productos_inactivos: productosInactivos,
+              mensaje: `Se procesaron ${productosInactivos.length} producto(s) inactivo(s). Revise el inventario.`,
+            }
+          : null,
+    };
+  } catch (error) {
+    await transaction.rollback();
     throw error;
   }
 };

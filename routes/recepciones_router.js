@@ -18,6 +18,15 @@ import { verifyToken, verifyRole } from "../middleware/auth.js";
 // Middleware de sanitización
 import { sanitizeSearch } from "../middleware/sanitizeSearch.js";
 
+// Rate Limiters específicos para recepciones
+import {
+  recepcionesWriteLimiter,
+  criticalRecepcionLimiter,
+  recepcionesReportLimiter,
+} from "../middleware/rateLimiters.js";
+
+import { trackPerformance } from "../middleware/performance.js";
+
 // Validaciones específicas
 import {
   validateCreateRecepcion,
@@ -28,11 +37,15 @@ import {
   validateProcesarRecepcion,
   validateBusinessDateRules,
   validateProductosBusinessRules,
+  validateMaxProductos,
+  validateCantidadesRazonables,
+  validatePreciosRazonables,
 } from "../validations/recepciones_validations.js";
 
 const router = express.Router();
 
-// recepciones_router.js - PARTE 2 (Rutas Principales)
+// ✅ NUEVO: Aplicar performance tracking a todas las rutas
+router.use(trackPerformance);
 
 // =====================================================
 // 📊 OBTENER TODAS LAS RECEPCIONES
@@ -121,6 +134,15 @@ router.get(
  * /recepciones/estadisticas:
  *   get:
  *     summary: Obtener estadísticas completas de recepciones
+ *     description: |
+ *       **Contexto de Negocio:**
+ *       - Query computacionalmente costoso (agregaciones + joins)
+ *       - Incluye estadísticas por proveedor (top 10)
+ *       - Cálculos de totales y promedios
+ *
+ *       **Rate Limiting:**
+ *       - Máximo 20 consultas cada 5 minutos
+ *       - Previene sobrecarga del servidor
  *     tags: [Recepciones]
  *     security:
  *       - bearerAuth: []
@@ -150,9 +172,12 @@ router.get(
  *         description: No autorizado
  *       403:
  *         description: Permisos insuficientes
+ *       429:
+ *         description: Límite de reportes excedido (20 cada 5 min)
  */
 router.get(
   "/estadisticas",
+  recepcionesReportLimiter,
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   obtenerEstadisticasRecepciones
@@ -223,6 +248,29 @@ router.get(
  * /recepciones:
  *   post:
  *     summary: Crear nueva recepción
+ *     description: |
+ *       Registra recepción de productos de proveedor.
+ *
+ *       **Contexto de Negocio:**
+ *       - Supermercado con ~100 proveedores
+ *       - Recepciones típicas: 2-5 por día
+ *       - Promedio: 10-50 productos por recepción
+ *
+ *       **Flujo de Trabajo:**
+ *       1. Crear recepción (estado: "pendiente")
+ *       2. Verificar mercancía física
+ *       3. Procesar recepción → Actualiza inventario
+ *
+ *       **Rate Limiting:**
+ *       - Máximo 30 recepciones cada 10 minutos por usuario
+ *       - Diseñado para operación normal del supermercado
+ *       - Protege contra errores de entrada duplicada
+ *
+ *       **Validaciones de Negocio:**
+ *       - No facturas duplicadas del mismo proveedor
+ *       - No productos duplicados en misma recepción
+ *       - No recepciones >30 días de antigüedad
+ *       - Proveedor debe estar activo
  *     tags: [Recepciones]
  *     security:
  *       - bearerAuth: []
@@ -276,6 +324,18 @@ router.get(
  *                       type: number
  *                       minimum: 0.01
  *                       maximum: 99999999.99
+ *           example:
+ *             numero_factura: "FAC-2024-001"
+ *             proveedor_id: 5
+ *             fecha_recepcion: "2024-12-16"
+ *             observaciones: "Entrega completa y en buen estado"
+ *             productos:
+ *               - producto_id: 123
+ *                 cantidad: 50
+ *                 precio_unitario: 2.50
+ *               - producto_id: 456
+ *                 cantidad: 30
+ *                 precio_unitario: 5.00
  *     responses:
  *       201:
  *         description: Recepción creada exitosamente
@@ -285,9 +345,12 @@ router.get(
  *         description: No autorizado
  *       403:
  *         description: Permisos insuficientes
+ *       429:
+ *         description: Límite de recepciones excedido (30 cada 10 min)
  */
 router.post(
   "/",
+  recepcionesWriteLimiter,
   sanitizeSearch({
     bodyFields: ["numero_factura", "observaciones"],
     maxLength: 1000,
@@ -299,6 +362,9 @@ router.post(
   validateCreateRecepcion,
   validateBusinessDateRules,
   validateProductosBusinessRules,
+  validateMaxProductos,
+  validateCantidadesRazonables,
+  validatePreciosRazonables,
   crearRecepcion
 );
 
@@ -369,6 +435,31 @@ router.put(
  * /recepciones/{id}/procesar:
  *   post:
  *     summary: Procesar recepción (actualizar inventario)
+ *     description: |
+ *       **OPERACIÓN CRÍTICA:** Actualiza stock de todos los productos en la recepción.
+ *
+ *       **Contexto de Negocio:**
+ *       - Procesamiento requiere verificación física de mercancía
+ *       - Actualiza inventario masivamente (múltiples productos)
+ *       - Crea movimientos de inventario auditables
+ *       - Opcionalmente actualiza precios de compra
+ *
+ *       **Rate Limiting:**
+ *       - Máximo 15 procesamientos cada 15 minutos por usuario
+ *       - Protege contra procesamiento accidental múltiple
+ *       - Operación irreversible (solo administradores/dueños)
+ *
+ *       **Validaciones Críticas:**
+ *       - Recepción debe estar en estado "pendiente"
+ *       - Productos deben estar activos (advertencia si inactivos)
+ *       - Stock se actualiza atómicamente (previene race conditions)
+ *
+ *       **Cascada de Efectos:**
+ *       1. Actualiza stock_actual de cada producto
+ *       2. Opcionalmente actualiza precio_compra
+ *       3. Crea movimientos_inventario (auditoría)
+ *       4. Cambia estado recepción a "procesada"
+ *       5. Invalida caché (productos + inventario + recepciones)
  *     tags: [Recepciones]
  *     security:
  *       - bearerAuth: []
@@ -394,18 +485,48 @@ router.put(
  *                 type: boolean
  *                 default: true
  *                 description: Actualizar precios de compra de productos
+ *           example:
+ *             observaciones_proceso: "Mercancía verificada, todo en orden"
+ *             actualizar_precios: true
  *     responses:
  *       200:
  *         description: Recepción procesada exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     mensaje:
+ *                       type: string
+ *                       example: "Recepción FAC-2024-001 procesada exitosamente"
+ *                     recepcion:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                         numero_factura:
+ *                           type: string
+ *                         estado:
+ *                           type: string
+ *                           example: "procesada"
  *       400:
  *         description: Recepción no encontrada o ya procesada
  *       401:
  *         description: No autorizado
  *       403:
  *         description: Permisos insuficientes
+ *       429:
+ *         description: Límite de procesamientos excedido (15 cada 15 min)
  */
 router.post(
   "/:id/procesar",
+  criticalRecepcionLimiter,
   sanitizeSearch({
     paramFields: ["id"],
     bodyFields: ["observaciones_proceso"],
@@ -428,6 +549,19 @@ router.post(
  * /recepciones/{id}/cancelar:
  *   delete:
  *     summary: Cancelar recepción
+ *     description: |
+ *       Cancela una recepción en estado "pendiente".
+ *
+ *       **Restricciones:**
+ *       - Solo recepciones en estado "pendiente"
+ *       - No afecta inventario (no se procesó)
+ *       - Operación auditable
+ *       - Solo administradores y dueños
+ *
+ *       **Casos de Uso:**
+ *       - Mercancía no llegó completa
+ *       - Error en factura detectado antes de procesar
+ *       - Cancelación de pedido por proveedor
  *     tags: [Recepciones]
  *     security:
  *       - bearerAuth: []
@@ -504,6 +638,25 @@ router.delete(
  *           format: date-time
  *           description: Fecha de creación del registro
  *
+ *     DetalleRecepcion:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *         recepcion_id:
+ *           type: integer
+ *         producto_id:
+ *           type: integer
+ *         cantidad:
+ *           type: number
+ *           format: float
+ *         precio_unitario:
+ *           type: number
+ *           format: float
+ *         subtotal:
+ *           type: number
+ *           format: float
+ *
  *     Pagination:
  *       type: object
  *       properties:
@@ -519,6 +672,47 @@ router.delete(
  *         pages:
  *           type: integer
  *           description: Total de páginas
+ *
+ *     RateLimitInfo:
+ *       type: object
+ *       description: Información de límites de tasa para recepciones
+ *       properties:
+ *         recepciones_crear:
+ *           type: object
+ *           properties:
+ *             limite:
+ *               type: integer
+ *               example: 30
+ *             ventana:
+ *               type: string
+ *               example: "10 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Permite entrada masiva sin saturar sistema"
+ *         recepciones_procesar:
+ *           type: object
+ *           properties:
+ *             limite:
+ *               type: integer
+ *               example: 15
+ *             ventana:
+ *               type: string
+ *               example: "15 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Operación crítica con actualización masiva de inventario"
+ *         recepciones_reportes:
+ *           type: object
+ *           properties:
+ *             limite:
+ *               type: integer
+ *               example: 20
+ *             ventana:
+ *               type: string
+ *               example: "5 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Consultas computacionalmente costosas"
  */
 
 export default router;

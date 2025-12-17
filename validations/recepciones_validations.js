@@ -200,6 +200,170 @@ const validateProductosBusinessRules = (req, res, next) => {
   next();
 };
 
+/**
+ * ✅ NUEVA: Validación de límite máximo de productos por recepción
+ * Contexto: Supermercado pequeño, previene recepciones masivas incorrectas
+ */
+const validateMaxProductos = (req, res, next) => {
+  const { productos } = req.body;
+
+  if (!productos || !Array.isArray(productos)) {
+    return next(); // Ya validado por Joi
+  }
+
+  // ✅ Contexto de negocio: Supermercado con ~3000 productos
+  // Recepción típica: 10-50 productos
+  // Máximo razonable: 100 productos (permite pedidos grandes pero bloquea errores)
+  const MAX_PRODUCTOS_POR_RECEPCION = 100;
+
+  if (productos.length > MAX_PRODUCTOS_POR_RECEPCION) {
+    console.warn(
+      `⚠️ RECEPCIÓN CON DEMASIADOS PRODUCTOS BLOQUEADA:\n` +
+        `   Productos enviados: ${productos.length}\n` +
+        `   Máximo permitido: ${MAX_PRODUCTOS_POR_RECEPCION}\n` +
+        `   Usuario: ${req.user?.id || "desconocido"}\n` +
+        `   Proveedor ID: ${req.body.proveedor_id || "N/A"}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    return res.status(400).json({
+      success: false,
+      error: "Demasiados productos en una sola recepción",
+      details: {
+        productos_enviados: productos.length,
+        maximo_permitido: MAX_PRODUCTOS_POR_RECEPCION,
+        exceso: productos.length - MAX_PRODUCTOS_POR_RECEPCION,
+      },
+      sugerencia:
+        "Divida la recepción en múltiples entregas. " +
+        "Si realmente necesita procesar más productos, contacte al administrador.",
+      contexto: {
+        razon: "Protección contra errores de entrada masiva",
+        recepcion_tipica: "10-50 productos",
+      },
+    });
+  }
+
+  next();
+};
+
+/**
+ * ✅ NUEVA: Validación de cantidad total razonable
+ * Previene errores de entrada (ej: 1000 unidades en lugar de 100)
+ */
+const validateCantidadesRazonables = (req, res, next) => {
+  const { productos } = req.body;
+
+  if (!productos || !Array.isArray(productos)) {
+    return next();
+  }
+
+  const MAX_CANTIDAD_POR_PRODUCTO = 10000; // Contexto: supermercado pequeño
+  const productosExcesivos = [];
+
+  productos.forEach((producto, index) => {
+    if (producto.cantidad > MAX_CANTIDAD_POR_PRODUCTO) {
+      productosExcesivos.push({
+        index,
+        producto_id: producto.producto_id,
+        cantidad: producto.cantidad,
+        maximo: MAX_CANTIDAD_POR_PRODUCTO,
+      });
+    }
+  });
+
+  if (productosExcesivos.length > 0) {
+    console.warn(
+      `⚠️ CANTIDADES EXCESIVAS DETECTADAS:\n` +
+        `   Productos con cantidades inusuales: ${productosExcesivos.length}\n` +
+        `   Detalles: ${JSON.stringify(productosExcesivos, null, 2)}\n` +
+        `   Usuario: ${req.user?.id}`
+    );
+
+    return res.status(400).json({
+      success: false,
+      error: "Cantidades inusualmente altas detectadas",
+      details: {
+        productos_excesivos: productosExcesivos,
+        maximo_permitido_por_producto: MAX_CANTIDAD_POR_PRODUCTO,
+      },
+      sugerencia:
+        "Verifique las cantidades ingresadas. " +
+        "Si los valores son correctos, contacte al administrador para autorización.",
+    });
+  }
+
+  next();
+};
+
+/**
+ * ✅ NUEVA: Validación de precios razonables
+ * Previene errores de entrada (ej: $100 en lugar de $1.00)
+ */
+const validatePreciosRazonables = (req, res, next) => {
+  const { productos } = req.body;
+
+  if (!productos || !Array.isArray(productos)) {
+    return next();
+  }
+
+  // Contexto: Supermercado mayoría productos entre $0.10 - $100
+  const MIN_PRECIO = 0.01;
+  const MAX_PRECIO_NORMAL = 1000;
+  const MAX_PRECIO_EXCEPCIONAL = 10000; // Para electrodomésticos caros
+
+  const productosConPreciosInusuales = [];
+
+  productos.forEach((producto, index) => {
+    const precio = parseFloat(producto.precio_unitario);
+
+    if (precio < MIN_PRECIO) {
+      productosConPreciosInusuales.push({
+        index,
+        producto_id: producto.producto_id,
+        precio,
+        tipo_error: "precio_muy_bajo",
+        mensaje: `Precio menor a $${MIN_PRECIO}`,
+      });
+    } else if (precio > MAX_PRECIO_EXCEPCIONAL) {
+      productosConPreciosInusuales.push({
+        index,
+        producto_id: producto.producto_id,
+        precio,
+        tipo_error: "precio_excesivo",
+        mensaje: `Precio mayor a $${MAX_PRECIO_EXCEPCIONAL}`,
+      });
+    } else if (precio > MAX_PRECIO_NORMAL) {
+      // Solo advertencia, no bloquea
+      console.warn(
+        `⚠️ PRECIO INUSUALMENTE ALTO:\n` +
+          `   Producto ID: ${producto.producto_id}\n` +
+          `   Precio: $${precio}\n` +
+          `   Usuario: ${req.user?.id}\n` +
+          `   Acción: Permitir (puede ser producto caro legítimo)`
+      );
+    }
+  });
+
+  if (productosConPreciosInusuales.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: "Precios inválidos detectados",
+      details: {
+        productos_con_errores: productosConPreciosInusuales,
+        rango_permitido: {
+          minimo: MIN_PRECIO,
+          maximo: MAX_PRECIO_EXCEPCIONAL,
+        },
+      },
+      sugerencia:
+        "Verifique los precios ingresados (puede ser error de punto decimal)",
+    });
+  }
+
+  next();
+};
+
 // =====================================================
 // 📤 EXPORTACIONES LIMPIAS
 // =====================================================
@@ -223,7 +387,12 @@ export {
   validateCompleteRecepcionProcessing,
   validateRecepcionCancellation,
 
-  // Validaciones de negocio adicionales (opcional)
+  // Validaciones de negocio adicionales (existentes)
   validateBusinessDateRules,
   validateProductosBusinessRules,
+
+  // Validaciones de negocio extendidas
+  validateMaxProductos,
+  validateCantidadesRazonables,
+  validatePreciosRazonables,
 };
