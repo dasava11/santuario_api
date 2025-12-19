@@ -9,10 +9,15 @@ import {
   invalidateProductCache,
   invalidateProductsListCache,
   invalidateProductCategoryCache,
-  generateCacheKey,
+  smartCacheKey,
 } from "./cacheService.js";
 
-const { productos, categorias, movimientos_inventario } = db;
+const { productos, categorias } = db;
+
+import {
+  actualizarStockAtomico,
+  registrarMovimiento,
+} from "./inventarioService.js";
 
 // =====================================================
 // OPERACIONES DE CONSULTA
@@ -31,8 +36,8 @@ const obtenerProductosFiltrados = async (filtros) => {
     limit = 50,
   } = filtros;
 
-  // Generar clave de caché
-  const cacheKey = generateCacheKey(CACHE_PREFIXES.PRODUCTOS_LIST, filtros);
+  // ✅ CORREGIDO: Usar generateCacheKey para múltiples parámetros
+  const cacheKey = smartCacheKey(CACHE_PREFIXES.PRODUCTOS_LIST, filtros);
   const cached = await cacheGet(cacheKey);
   if (cached) return { ...cached, fromCache: true };
 
@@ -102,9 +107,8 @@ const obtenerProductosFiltrados = async (filtros) => {
  * Obtiene un producto específico por ID
  */
 const obtenerProductoPorId = async (id) => {
-  const cacheKey = generateCacheKey(CACHE_PREFIXES.PRODUCTO_ID, {
-    productoId: id,
-  });
+  // ✅ CORREGIDO: Usar smartCacheKey con ID simple
+  const cacheKey = smartCacheKey(CACHE_PREFIXES.PRODUCTO_ID, id);
   const cached = await cacheGet(cacheKey);
   if (cached) return { ...cached, fromCache: true };
 
@@ -135,9 +139,8 @@ const obtenerProductoPorId = async (id) => {
  * Busca producto por código de barras (para POS)
  */
 const obtenerProductoPorCodigoBarras = async (codigo) => {
-  const cacheKey = generateCacheKey(CACHE_PREFIXES.PRODUCTO_BARCODE, {
-    codigoBarras: codigo,
-  });
+  // ✅ CORREGIDO: Usar smartCacheKey con código simple
+  const cacheKey = smartCacheKey(CACHE_PREFIXES.PRODUCTO_BARCODE, codigo);
   const cached = await cacheGet(cacheKey);
   if (cached) return { ...cached, fromCache: true };
 
@@ -174,6 +177,7 @@ const obtenerProductoPorCodigoBarras = async (codigo) => {
 
 /**
  * Crea nuevo producto con validaciones de unicidad
+ * ✅ REFACTORIZADO: Usa función atómica para stock inicial
  */
 const crearProducto = async (datosProducto, usuarioId) => {
   const transaction = await sequelize.transaction();
@@ -191,6 +195,10 @@ const crearProducto = async (datosProducto, usuarioId) => {
       stock_minimo,
       activo,
     } = datosProducto;
+
+    // ====================================================
+    // 1️⃣ VALIDACIONES DE UNICIDAD
+    // ====================================================
 
     // Validar nombre único (case-insensitive)
     const nombreNormalizado = nombre.trim().toLowerCase();
@@ -224,6 +232,10 @@ const crearProducto = async (datosProducto, usuarioId) => {
       throw new Error("CATEGORIA_NOT_FOUND");
     }
 
+    // ====================================================
+    // 2️⃣ CREAR PRODUCTO (sin stock aún)
+    // ====================================================
+
     // Crear producto
     const nuevoProducto = await productos.create(
       {
@@ -234,28 +246,49 @@ const crearProducto = async (datosProducto, usuarioId) => {
         precio_compra: Number(precio_compra),
         precio_venta: Number(precio_venta),
         tipo_medida,
-        stock_actual: stock_actual || 0,
+        stock_actual: 0,
         stock_minimo: stock_minimo || 0,
         activo: activo ?? true,
       },
       { transaction }
     );
 
-    // Crear movimiento de inventario inicial si hay stock
-    if (stock_actual > 0) {
-      await movimientos_inventario.create(
+    // ====================================================
+    // 3️⃣ ACTUALIZAR STOCK DE FORMA ATÓMICA (si hay stock inicial)
+    // ====================================================
+
+    if (stock_actual && Number(stock_actual) > 0) {
+      console.log(
+        `📦 Creando producto con stock inicial: ${stock_actual} unidades`
+      );
+
+      // Usar función atómica de inventario
+
+      const cantidadInicial = Number(stock_actual);
+
+      const productoActualizado = await actualizarStockAtomico(
+        nuevoProducto.id,
+        cantidadInicial,
+        "entrada",
+        transaction
+      );
+
+      await registrarMovimiento(
         {
           producto_id: nuevoProducto.id,
           tipo_movimiento: "entrada",
-          cantidad: stock_actual,
+          cantidad: cantidadInicial,
           stock_anterior: 0,
-          stock_nuevo: stock_actual,
+          stock_nuevo: cantidadInicial,
           referencia_tipo: "ajuste",
+          referencia_id: null,
           usuario_id: usuarioId,
           observaciones: "Stock inicial al crear producto",
         },
-        { transaction }
+        transaction
       );
+
+      nuevoProducto.stock_actual = productoActualizado.stock_actual;
     }
 
     await transaction.commit();
@@ -265,9 +298,7 @@ const crearProducto = async (datosProducto, usuarioId) => {
     // - actualizarStock(): para movimientos de entrada/salida
     // - ajustarInventario(): para correcciones directas
 
-    // Invalidar caché
     await invalidateProductsListCache();
-
     return nuevoProducto;
   } catch (error) {
     await transaction.rollback();
@@ -287,6 +318,7 @@ const actualizarProducto = async (id, datosActualizacion) => {
       throw new Error("PRODUCTO_NOT_FOUND");
     }
 
+    const categoriaAnterior = producto.categoria_id;
     const fieldsToUpdate = {};
 
     // Validar nombre único si cambió (case-insensitive)
@@ -397,6 +429,7 @@ const actualizarProducto = async (id, datosActualizacion) => {
 
     // Si cambió categoría, invalidar caché específico
     if (fieldsToUpdate.categoria_id) {
+      await invalidateProductCategoryCache(id, categoriaAnterior);
       await invalidateProductCategoryCache(id, fieldsToUpdate.categoria_id);
     }
 

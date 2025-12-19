@@ -545,6 +545,194 @@ ESTADÍSTICAS (recepcionesReportLimiter):
 */
 
 // =====================================================
+// 📦 RATE LIMITERS PARA PRODUCTOS
+// =====================================================
+
+/**
+ * Rate limiter para CREAR/ACTUALIZAR PRODUCTOS
+ * Límite: 30 operaciones cada 10 minutos por usuario
+ *
+ * Contexto del negocio:
+ * - Supermercado con ~3000 productos
+ * - Alta rotación: ~200 productos nuevos/mes
+ * - Actualizaciones frecuentes de precios
+ * - 30 operaciones en 10 min = ritmo razonable de gestión de catálogo
+ */
+export const productosWriteLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutos
+  max: 30, // 30 operaciones de escritura
+  message: {
+    error: "Demasiadas operaciones de productos en poco tiempo",
+    tipo: "productos_write_limit",
+    retry_after_seconds: 600,
+    sugerencia: "Espera unos minutos antes de realizar más cambios",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Identificar por usuario (admin/dueño)
+    return req.user
+      ? `productos_write_user_${req.user.id}`
+      : `productos_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE OPERACIONES DE PRODUCTOS EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Operación: ${req.method} ${req.path}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Límite de operaciones de productos excedido temporalmente",
+      detalles:
+        "Has realizado demasiadas operaciones en los últimos 10 minutos (máximo: 30)",
+      retry_after_seconds: 600,
+      tipo: "productos_rate_limit",
+      contexto: {
+        limite: 30,
+        ventana: "10 minutos",
+        usuario: req.user?.id || null,
+      },
+    });
+  },
+  skip: (req) => {
+    // Permitir ilimitado para rol "sistema" (procesos automáticos)
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter CRÍTICO para ELIMINAR PRODUCTOS (desactivación lógica)
+ * Límite: 10 eliminaciones cada 15 minutos por usuario
+ *
+ * Contexto del negocio:
+ * - Eliminaciones son operaciones sensibles
+ * - Requieren autorización (solo admin/dueño)
+ * - Impactan inventario y reportes
+ * - 10 eliminaciones en 15 min es un volumen alto inusual
+ */
+export const criticalProductLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10, // Solo 10 eliminaciones
+  message: {
+    error: "Demasiadas eliminaciones de productos",
+    tipo: "productos_eliminacion_limit",
+    retry_after_seconds: 900,
+    sugerencia:
+      "Las eliminaciones masivas requieren supervisión del administrador",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `productos_delete_user_${req.user.id}`
+      : `productos_delete_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    const productoId = req.params.id;
+
+    console.error(
+      `🚨 ELIMINACIÓN DE PRODUCTO BLOQUEADA POR RATE LIMIT:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id}, Rol: ${req.user?.rol})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Producto ID: ${productoId}\n` +
+        `   Timestamp: ${new Date().toISOString()}\n` +
+        `   ⚠️ ALERTA: Posible patrón anormal de eliminaciones`
+    );
+
+    res.status(429).json({
+      error: "Límite de eliminaciones de productos excedido",
+      detalles:
+        "Solo se permiten 10 eliminaciones cada 15 minutos por razones de seguridad",
+      retry_after_seconds: 900,
+      tipo: "critical_eliminacion_limit",
+      contexto: {
+        limite: 10,
+        ventana: "15 minutos",
+        razon:
+          "Prevención de errores masivos y auditoría de operaciones críticas",
+      },
+      sugerencia:
+        "Si necesitas eliminar múltiples productos, contacta al supervisor o administrador del sistema",
+    });
+  },
+  skip: (req) => {
+    // Permitir ilimitado solo para rol "sistema" (procesos automáticos)
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter para BÚSQUEDAS DE PRODUCTOS (con LIKE)
+ * Límite: 60 búsquedas cada 5 minutos por usuario
+ *
+ * Contexto del negocio:
+ * - Búsquedas con LIKE son costosas en MySQL
+ * - POS realiza búsquedas frecuentes por código de barras (más eficientes)
+ * - Búsquedas por nombre/descripción son menos frecuentes
+ * - 60 búsquedas en 5 min = 12 búsquedas/min (razonable para gestión manual)
+ */
+export const productosSearchLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutos
+  max: 60, // 60 búsquedas
+  message: {
+    error: "Demasiadas búsquedas de productos en poco tiempo",
+    tipo: "productos_search_limit",
+    retry_after_seconds: 300,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `productos_search_user_${req.user.id}`
+      : `productos_search_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE BÚSQUEDAS DE PRODUCTOS EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.id}\n` +
+        `   Query: ${JSON.stringify(req.query)}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Demasiadas búsquedas en poco tiempo",
+      detalles: "Límite de 60 búsquedas cada 5 minutos",
+      retry_after_seconds: 300,
+      tipo: "search_rate_limit",
+      sugerencia: "Espera unos minutos antes de realizar más búsquedas",
+    });
+  },
+  // Sin skip: Aplicar a todos los usuarios (incluido sistema)
+});
+
+// =====================================================
+// 📊 DOCUMENTACIÓN DE LÍMITES POR CONTEXTO DE NEGOCIO
+// =====================================================
+
+/*
+JUSTIFICACIÓN DE LÍMITES PARA PRODUCTOS DE SUPERMERCADO:
+
+CREAR/ACTUALIZAR (productosWriteLimiter):
+- 30 operaciones / 10 min = 3 operaciones/min
+- Contexto: ~200 productos nuevos/mes = 6.6 productos/día = 0.27 productos/hora
+- Permite picos de hasta 180x el promedio (muy generoso para actualizaciones masivas)
+
+ELIMINAR (criticalProductLimiter):
+- 10 eliminaciones / 15 min = 0.66 eliminaciones/min
+- Contexto: Eliminaciones son raras (<1% de operaciones normales)
+- Límite previene errores en cascada y requiere supervisión si se excede
+
+BÚSQUEDAS (productosSearchLimiter):
+- 60 búsquedas / 5 min = 12 búsquedas/min
+- Contexto: Búsquedas con LIKE son costosas en MySQL
+- Búsquedas por código de barras (más eficientes) NO están limitadas
+- Límite razonable para gestión manual sin bloquear operación normal
+*/
+
+// =====================================================
 // 🎯 CONFIGURACIÓN AVANZADA (OPCIONAL)
 // =====================================================
 
