@@ -765,104 +765,276 @@ router.delete(
  *         - categoria_id
  *         - precio_compra
  *         - precio_venta
- *         - tipo_medida
- *         - stock_actual
- *         - stock_minimo
- *         - activo
  *       properties:
  *         id:
  *           type: integer
  *           description: ID único autoincremental del producto
  *           example: 123
+ *           readOnly: true
  *
  *         codigo_barras:
  *           type: string
  *           nullable: true
  *           maxLength: 50
- *           description: Código de barras único del producto (EAN, UPC o interno)
+ *           description: |
+ *             Código de barras único del producto (EAN-13, UPC, o código interno).
+ *             - Debe ser único en el sistema
+ *             - Usado principalmente en POS para búsqueda rápida
+ *             - Nullable: Productos sin código se gestionan solo por ID
  *           example: "7501234567890"
  *
  *         nombre:
  *           type: string
  *           minLength: 2
  *           maxLength: 200
- *           description: Nombre descriptivo del producto
+ *           description: |
+ *             Nombre descriptivo del producto.
+ *             - Debe ser único (case-insensitive)
+ *             - Se recomienda incluir marca y presentación
  *           example: "Arroz Diana 500g"
  *
  *         descripcion:
  *           type: string
  *           nullable: true
  *           maxLength: 1000
- *           description: Descripción detallada del producto
- *           example: "Arroz blanco premium para consumo doméstico"
+ *           description: Descripción detallada del producto (opcional)
+ *           example: "Arroz blanco de grano largo, premium calidad extra"
  *
  *         categoria_id:
  *           type: integer
  *           minimum: 1
- *           description: Identificador de la categoría asociada
+ *           description: |
+ *             ID de la categoría a la que pertenece el producto.
+ *             - Debe existir en la tabla `categorias`
+ *             - Campo obligatorio
  *           example: 5
  *
  *         precio_compra:
  *           type: number
- *           format: decimal
+ *           format: decimal(10,2)
  *           minimum: 0.01
- *           description: Precio de compra al proveedor
+ *           maximum: 99999999.99
+ *           description: |
+ *             Precio de compra al proveedor (costo).
+ *             - Formato: Hasta 10 dígitos, 2 decimales
+ *             - **Validación de negocio**: precio_venta debe ser mayor a precio_compra
  *           example: 1800.50
  *
  *         precio_venta:
  *           type: number
- *           format: decimal
+ *           format: decimal(10,2)
  *           minimum: 0.01
- *           description: Precio de venta al público (debe ser mayor al precio de compra)
+ *           maximum: 99999999.99
+ *           description: |
+ *             Precio de venta al público.
+ *             - Formato: Hasta 10 dígitos, 2 decimales
+ *             - **Validación de negocio**: Debe ser mayor que precio_compra
+ *             - Se valida tanto en Joi como en Sequelize
  *           example: 2300.00
  *
  *         tipo_medida:
  *           type: string
  *           enum: [unidad, peso]
- *           description: Tipo de medición del producto
+ *           default: unidad
+ *           description: |
+ *             Tipo de medición del producto:
+ *             - `unidad`: Productos contables (ej: latas, paquetes)
+ *             - `peso`: Productos que se venden por peso (ej: frutas, carne)
  *           example: "unidad"
  *
  *         stock_actual:
  *           type: number
- *           format: decimal
+ *           format: decimal(10,3)
  *           minimum: 0
- *           description: Cantidad actual disponible en inventario
+ *           maximum: 99999999.999
+ *           description: |
+ *             Cantidad actual disponible en inventario.
+ *             - Formato: Hasta 10 dígitos, 3 decimales (precisión para peso)
+ *             - **IMPORTANTE**: NO se actualiza directamente desde este endpoint
+ *             - Para modificar stock usar: `/inventario/:id/stock` o `/inventario/ajustar`
+ *             - Se actualiza automáticamente en ventas y recepciones
  *           example: 150.250
+ *           readOnly: true
  *
  *         stock_minimo:
  *           type: number
- *           format: decimal
+ *           format: decimal(10,3)
  *           minimum: 0
- *           description: Stock mínimo para generar alertas de reposición
+ *           maximum: 99999999.999
+ *           description: |
+ *             Stock mínimo para generar alertas de reposición.
+ *             - Cuando stock_actual <= stock_minimo, el producto aparece en alertas
+ *             - Usado por el módulo de inventario para notificaciones
  *           example: 20.000
  *
  *         activo:
  *           type: boolean
- *           description: Estado del producto (true = activo, false = desactivado)
+ *           default: true
+ *           description: |
+ *             Estado del producto en el sistema:
+ *             - `true`: Producto activo (visible en POS y reportes)
+ *             - `false`: Producto desactivado (eliminación lógica)
+ *             - Los productos desactivados no aparecen en búsquedas por defecto
  *           example: true
  *
  *         fecha_creacion:
  *           type: string
  *           format: date-time
- *           description: Fecha de creación del registro
+ *           description: Fecha y hora de creación del registro (gestionado automáticamente)
  *           example: "2024-11-01T10:15:30.000Z"
+ *           readOnly: true
  *
  *         fecha_actualizacion:
  *           type: string
  *           format: date-time
- *           description: Fecha de la última actualización del registro
+ *           description: |
+ *             Fecha y hora de la última actualización del registro.
+ *             - Actualizado automáticamente por Sequelize en cada UPDATE
+ *             - Útil para auditorías y sincronización
  *           example: "2024-11-05T08:45:12.000Z"
+ *           readOnly: true
  *
  *         categoria:
+ *           $ref: '#/components/schemas/CategoriaBasica'
+ *
+ *     CategoriaBasica:
+ *       type: object
+ *       description: Información básica de categoría (incluida en producto)
+ *       properties:
+ *         id:
+ *           type: integer
+ *           example: 5
+ *         nombre:
+ *           type: string
+ *           example: "Granos y cereales"
+ *
+ *     ProductoPaginacion:
+ *       type: object
+ *       description: Respuesta paginada de productos
+ *       properties:
+ *         productos:
+ *           type: array
+ *           items:
+ *             $ref: '#/components/schemas/Producto'
+ *         pagination:
+ *           $ref: '#/components/schemas/Pagination'
+ *
+ *     Pagination:
+ *       type: object
+ *       description: Información de paginación estándar
+ *       properties:
+ *         page:
+ *           type: integer
+ *           description: Página actual
+ *           example: 1
+ *         limit:
+ *           type: integer
+ *           description: Límite de resultados por página
+ *           example: 50
+ *         total:
+ *           type: integer
+ *           description: Total de registros encontrados
+ *           example: 3000
+ *         pages:
+ *           type: integer
+ *           description: Total de páginas disponibles
+ *           example: 60
+ *
+ *     ProductoRateLimitInfo:
+ *       type: object
+ *       description: Información de rate limiting para endpoints de productos
+ *       properties:
+ *         crear_actualizar:
  *           type: object
- *           description: Categoría asociada al producto
  *           properties:
- *             id:
+ *             limite:
  *               type: integer
- *               example: 5
- *             nombre:
+ *               example: 30
+ *             ventana:
  *               type: string
- *               example: "Granos y cereales"
+ *               example: "10 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Operaciones de escritura (POST/PUT)"
+ *         eliminar:
+ *           type: object
+ *           properties:
+ *             limite:
+ *               type: integer
+ *               example: 10
+ *             ventana:
+ *               type: string
+ *               example: "15 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Operación crítica con auditoría"
+ *         busquedas:
+ *           type: object
+ *           properties:
+ *             limite:
+ *               type: integer
+ *               example: 60
+ *             ventana:
+ *               type: string
+ *               example: "5 minutos"
+ *             descripcion:
+ *               type: string
+ *               example: "Solo para búsquedas con LIKE (search param)"
+ *
+ *     ErrorResponse:
+ *       type: object
+ *       description: Formato estándar de respuesta de error
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: false
+ *         error:
+ *           type: object
+ *           properties:
+ *             message:
+ *               type: string
+ *               example: "El precio de venta debe ser mayor al precio de compra"
+ *             code:
+ *               type: integer
+ *               example: 400
+ *             timestamp:
+ *               type: string
+ *               format: date-time
+ *               example: "2024-11-05T10:30:00.000Z"
+ *             details:
+ *               type: object
+ *               description: Detalles adicionales del error (opcional)
+ *
+ *     SuccessResponse:
+ *       type: object
+ *       description: Formato estándar de respuesta exitosa
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: true
+ *         data:
+ *           type: object
+ *           description: Datos de la respuesta (varía según endpoint)
+ *         metadata:
+ *           type: object
+ *           properties:
+ *             timestamp:
+ *               type: string
+ *               format: date-time
+ *               example: "2024-11-05T10:30:00.000Z"
+ *             operacion:
+ *               type: string
+ *               example: "creacion"
+ *         cache_info:
+ *           type: object
+ *           description: Información de caché (solo si aplica)
+ *           properties:
+ *             from_cache:
+ *               type: boolean
+ *               example: true
+ *             cache_timestamp:
+ *               type: string
+ *               format: date-time
  */
 
 export default router;
