@@ -152,19 +152,19 @@ export default (sequelize) => {
           using: "BTREE",
           fields: [{ name: "email" }],
         },
-        // ✅ NUEVO: Índice para filtros por rol y estado
+        // Índice para filtros por rol y estado
         {
           name: "idx_usuarios_rol_activo",
           using: "BTREE",
           fields: [{ name: "rol" }, { name: "activo" }],
         },
-        // ✅ NUEVO: Índice para búsquedas por nombre completo
+        // Índice para búsquedas por nombre completo
         {
           name: "idx_usuarios_nombre_completo",
           using: "BTREE",
           fields: [{ name: "nombre" }, { name: "apellido" }, { name: "activo" }],
         },
-        // ✅ NUEVO: Índice para filtros por estado
+        // Índice para filtros por estado
         {
           name: "idx_usuarios_activo",
           using: "BTREE",

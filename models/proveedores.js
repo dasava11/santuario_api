@@ -119,25 +119,19 @@ export default (sequelize) => {
           using: "BTREE",
           fields: [{ name: "id" }],
         },
-        // ✅ NUEVO: Índice en email (búsquedas + unicidad lógica)
-        {
-          name: "idx_proveedores_email",
-          using: "BTREE",
-          fields: [{ name: "email" }],
-        },
-        // ✅ NUEVO: Índice en estado activo (filtro común)
+        // Índice en estado activo (filtro común)
         {
           name: "idx_proveedores_activo",
           using: "BTREE",
           fields: [{ name: "activo" }],
         },
-        // ✅ NUEVO: Índice en nombre (búsquedas frecuentes)
+        // Índice en nombre (búsquedas frecuentes)
         {
           name: "idx_proveedores_nombre",
           using: "BTREE",
           fields: [{ name: "nombre" }],
         },
-        // ✅ NUEVO: Índice compuesto (filtro combinado)
+        // Índice compuesto (filtro combinado)
         {
           name: "idx_proveedores_nombre_activo",
           using: "BTREE",

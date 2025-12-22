@@ -188,8 +188,8 @@ export default (sequelize) => {
     {
       sequelize,
       tableName: "productos",
-      timestamps: true, // ✅ HABILITADO
-      createdAt: "fecha_creacion", // ✅ Mapeo a campos existentes
+      timestamps: true,
+      createdAt: "fecha_creacion", 
       updatedAt: "fecha_actualizacion",
       indexes: [
         {
@@ -199,12 +199,11 @@ export default (sequelize) => {
           fields: [{ name: "id" }],
         },
         {
-          name: "codigo_barras_unique", // ✅ RENOMBRADO (antes: "codigo_barras")
+          name: "codigo_barras_unique",
           unique: true,
           using: "BTREE",
           fields: [{ name: "codigo_barras" }],
         },
-        // ❌ ELIMINADO: "idx_productos_codigo_barras" (duplicado)
         {
           name: "idx_productos_nombre",
           using: "BTREE",

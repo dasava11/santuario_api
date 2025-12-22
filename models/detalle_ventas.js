@@ -142,7 +142,7 @@ export default (sequelize) => {
           using: "BTREE",
           fields: [{ name: "producto_id" }],
         },
-        // ✅ NUEVO ÍNDICE COMPUESTO: Para evitar duplicados en misma venta
+        // ÍNDICE COMPUESTO: Para evitar duplicados en misma venta
         {
           name: "idx_detalle_venta_producto_unique",
           unique: true,
