@@ -1,4 +1,4 @@
-// services/proveedoresService.js - Refactorizado KISS
+// services/proveedoresService.js - REFACTORIZACIÓN CORRECTA (KISS)
 import { sequelize, Op } from "../config/database.js";
 import db from "../models/index.js";
 import {
@@ -14,11 +14,14 @@ import {
 const { proveedores, recepciones } = db;
 
 // =====================================================
-// OPERACIONES DE CONSULTA
+// 📊 OPERACIONES DE CONSULTA
 // =====================================================
 
 /**
  * Obtiene proveedores con filtros, búsqueda y paginación
+ * 
+ * @param {Object} filtros - Filtros de búsqueda
+ * @returns {Promise<Object>} { data, metadata, pagination, fromCache }
  */
 const obtenerProveedoresFiltrados = async (filtros) => {
   const {
@@ -48,7 +51,7 @@ const obtenerProveedoresFiltrados = async (filtros) => {
 
   const offset = (parseInt(page) - 1) * parseInt(limit);
 
-  // Paso 1: obtener IDs paginados
+  // Paso 1: Obtener IDs paginados
   const proveedoresIds = await proveedores.findAll({
     where,
     attributes: ["id"],
@@ -60,7 +63,7 @@ const obtenerProveedoresFiltrados = async (filtros) => {
   const ids = proveedoresIds.map((p) => p.id);
   let proveedoresData = [];
 
-  // Paso 2: traer proveedores completos (con o sin estadísticas)
+  // Paso 2: Traer proveedores completos (con o sin estadísticas)
   if (ids.length > 0) {
     const queryOptions = {
       where: { id: { [Op.in]: ids } },
@@ -132,6 +135,10 @@ const obtenerProveedoresFiltrados = async (filtros) => {
 
 /**
  * Obtiene un proveedor específico por ID
+ * 
+ * @param {number} id - ID del proveedor
+ * @param {Object} opciones - Opciones de consulta
+ * @returns {Promise<Object|null>} { data, metadata, fromCache } o null
  */
 const obtenerProveedorPorId = async (id, opciones = {}) => {
   const { incluir_recepciones = "false" } = opciones;
@@ -187,22 +194,27 @@ const obtenerProveedorPorId = async (id, opciones = {}) => {
 };
 
 // =====================================================
-// OPERACIONES DE ESCRITURA
+// ✅ OPERACIONES DE ESCRITURA
 // =====================================================
 
 /**
  * Crea nuevo proveedor
  * Sequelize maneja unique constraints automáticamente
+ * 
+ * @param {Object} datosProveedor - Datos del proveedor
+ * @returns {Promise<Object>} Proveedor creado
+ * @throws {SequelizeUniqueConstraintError} Si email duplicado (manejado en controlador)
  */
 const crearProveedor = async (datosProveedor) => {
   const { nombre, email, contacto, telefono, direccion, ciudad, pais, activo } =
     datosProveedor;
 
+  // ✅ CREAR: Sequelize lanza error si viola unique constraint
   const nuevoProveedor = await proveedores.create({
     nombre: nombre.trim(),
     contacto: contacto?.trim() || null,
     telefono: telefono?.trim() || null,
-    email: email?.trim() || null,
+    email: email?.trim() || null, // ✅ SIN lowercase (consistente con original)
     direccion: direccion?.trim() || null,
     ciudad: ciudad?.trim() || null,
     pais: pais?.trim() || "Colombia",
@@ -217,6 +229,11 @@ const crearProveedor = async (datosProveedor) => {
 
 /**
  * Actualiza proveedor existente
+ * 
+ * @param {number} id - ID del proveedor
+ * @param {Object} datosActualizacion - Campos a actualizar
+ * @returns {Promise<Object>} { proveedor, camposModificados }
+ * @throws {Error} PROVEEDOR_NOT_FOUND si no existe
  */
 const actualizarProveedor = async (id, datosActualizacion) => {
   const transaction = await sequelize.transaction();
@@ -237,7 +254,7 @@ const actualizarProveedor = async (id, datosActualizacion) => {
     if (datosActualizacion.telefono !== undefined)
       fieldsToUpdate.telefono = datosActualizacion.telefono?.trim() || null;
     if (datosActualizacion.email !== undefined)
-      fieldsToUpdate.email = datosActualizacion.email?.trim() || null;
+      fieldsToUpdate.email = datosActualizacion.email?.trim() || null; // ✅ SIN lowercase
     if (datosActualizacion.direccion !== undefined)
       fieldsToUpdate.direccion = datosActualizacion.direccion?.trim() || null;
     if (datosActualizacion.ciudad !== undefined)
@@ -246,6 +263,9 @@ const actualizarProveedor = async (id, datosActualizacion) => {
       fieldsToUpdate.pais = datosActualizacion.pais?.trim() || null;
     if (datosActualizacion.activo !== undefined)
       fieldsToUpdate.activo = datosActualizacion.activo;
+
+    // ✅ NUEVO: Actualizar fecha_actualizacion automáticamente
+    fieldsToUpdate.fecha_actualizacion = new Date();
 
     // Actualizar - Sequelize lanza error si viola unique constraint
     await proveedor.update(fieldsToUpdate, { transaction });
@@ -266,47 +286,73 @@ const actualizarProveedor = async (id, datosActualizacion) => {
 };
 
 /**
- * Desactiva proveedor (soft delete)
+ * ✅ REFACTORIZADO: Desactiva proveedor (soft delete) con transacción
+ * 
+ * @param {number} id - ID del proveedor
+ * @returns {Promise<Object>} Proveedor desactivado
+ * @throws {Error} PROVEEDOR_NOT_FOUND si no existe
+ * @throws {Error} PROVEEDOR_ALREADY_INACTIVE si ya está inactivo
+ * @throws {Error} ACTIVE_RECEPCIONES:{count} si tiene recepciones activas
  */
 const desactivarProveedor = async (id) => {
-  const proveedor = await proveedores.findByPk(id);
+  // ✅ NUEVO: Usar transacción para consistencia
+  const transaction = await sequelize.transaction();
 
-  if (!proveedor) {
-    throw new Error("PROVEEDOR_NOT_FOUND");
+  try {
+    const proveedor = await proveedores.findByPk(id, { transaction });
+
+    if (!proveedor) {
+      throw new Error("PROVEEDOR_NOT_FOUND");
+    }
+
+    // ✅ NUEVO: Validar que no esté ya inactivo
+    if (!proveedor.activo) {
+      throw new Error("PROVEEDOR_ALREADY_INACTIVE");
+    }
+
+    // ✅ MEJORADO: Verificar recepciones activas dentro de transacción
+    const recepcionesActivas = await recepciones.count({
+      where: {
+        proveedor_id: id,
+        estado: { [Op.in]: ["pendiente", "procesada"] },
+      },
+      transaction, // ✅ AGREGADO: Dentro de transacción
+    });
+
+    if (recepcionesActivas > 0) {
+      throw new Error(`ACTIVE_RECEPCIONES:${recepcionesActivas}`);
+    }
+
+    // ✅ NUEVO: Desactivar con fecha_actualizacion
+    await proveedor.update(
+      {
+        activo: false,
+        fecha_actualizacion: new Date(), // ✅ AGREGADO
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
+
+    // Invalidar cache
+    await invalidateProvidersListCache();
+    await invalidateProviderCache(id, proveedor.email);
+
+    return proveedor;
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
   }
-
-  if (!proveedor.activo) {
-    throw new Error("PROVEEDOR_ALREADY_INACTIVE");
-  }
-
-  // Verificar recepciones activas
-  const recepcionesActivas = await recepciones.count({
-    where: {
-      proveedor_id: id,
-      estado: { [Op.in]: ["pendiente", "procesada"] },
-    },
-  });
-
-  if (recepcionesActivas > 0) {
-    throw new Error(`ACTIVE_RECEPCIONES:${recepcionesActivas}`);
-  }
-
-  // Desactivar
-  await proveedor.update({ activo: false });
-
-  // Invalidar cache
-  await invalidateProvidersListCache();
-  await invalidateProviderCache(id, proveedor.email);
-
-  return proveedor;
 };
 
 // =====================================================
-// OPERACIONES DE ANÁLISIS
+// 📊 OPERACIONES DE ANÁLISIS
 // =====================================================
 
 /**
  * Obtiene estadísticas completas de proveedores
+ * 
+ * @returns {Promise<Object>} { data, metadata, fromCache }
  */
 const obtenerEstadisticasCompletas = async () => {
   const cacheKey = generateCacheKey(
@@ -382,7 +428,7 @@ const obtenerEstadisticasCompletas = async () => {
 };
 
 // =====================================================
-// EXPORTACIONES
+// 📤 EXPORTACIONES
 // =====================================================
 export default {
   obtenerProveedoresFiltrados,

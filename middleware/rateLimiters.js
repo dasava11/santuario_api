@@ -733,6 +733,370 @@ BÚSQUEDAS (productosSearchLimiter):
 */
 
 // =====================================================
+// 📦 RATE LIMITERS PARA PROVEEDORES
+// =====================================================
+
+/**
+ * Rate limiter para CREAR/ACTUALIZAR PROVEEDORES
+ * Límite: 20 operaciones cada 10 minutos por usuario
+ * 
+ * Contexto del negocio:
+ * - ~100 proveedores totales
+ * - Operaciones infrecuentes (nuevos proveedores: ~2-5/mes)
+ * - Solo 2 roles pueden modificar (admin/dueño)
+ * - 20 operaciones en 10 min es muy generoso
+ */
+export const proveedoresWriteLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutos
+  max: 20, // 20 operaciones
+  message: {
+    error: "Demasiadas operaciones de proveedores en poco tiempo",
+    tipo: "proveedores_write_limit",
+    retry_after_seconds: 600,
+    sugerencia: "Espera unos minutos antes de realizar más cambios",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `proveedores_write_user_${req.user.id}`
+      : `proveedores_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE OPERACIONES DE PROVEEDORES EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Operación: ${req.method} ${req.path}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Límite de operaciones de proveedores excedido temporalmente",
+      detalles:
+        "Has realizado demasiadas operaciones en los últimos 10 minutos (máximo: 20)",
+      retry_after_seconds: 600,
+      tipo: "proveedores_rate_limit",
+      contexto: {
+        limite: 20,
+        ventana: "10 minutos",
+        usuario: req.user?.id || null,
+      },
+    });
+  },
+  skip: (req) => {
+    // Permitir ilimitado para rol "sistema" (procesos automáticos)
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter CRÍTICO para DESACTIVAR PROVEEDORES
+ * Límite: 5 desactivaciones cada 15 minutos
+ * 
+ * Contexto del negocio:
+ * - Desactivar proveedor es operación sensible
+ * - Puede afectar recepciones activas
+ * - Requiere validación de impacto
+ * - 5 desactivaciones en 15 min es razonable
+ */
+export const criticalProveedorLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 5, // Solo 5 desactivaciones
+  message: {
+    error: "Demasiadas desactivaciones de proveedores",
+    tipo: "proveedores_delete_limit",
+    retry_after_seconds: 900,
+    sugerencia:
+      "Las desactivaciones masivas requieren supervisión del administrador",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `proveedores_delete_user_${req.user.id}`
+      : `proveedores_delete_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    const proveedorId = req.params.id;
+
+    console.error(
+      `🚨 DESACTIVACIÓN DE PROVEEDOR BLOQUEADA POR RATE LIMIT:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id}, Rol: ${req.user?.rol})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Proveedor ID: ${proveedorId}\n` +
+        `   Timestamp: ${new Date().toISOString()}\n` +
+        `   ⚠️ ALERTA: Posible patrón anormal de desactivaciones`
+    );
+
+    res.status(429).json({
+      error: "Límite de desactivaciones de proveedores excedido",
+      detalles:
+        "Solo se permiten 5 desactivaciones cada 15 minutos por razones de seguridad",
+      retry_after_seconds: 900,
+      tipo: "critical_delete_limit",
+      contexto: {
+        limite: 5,
+        ventana: "15 minutos",
+        razon:
+          "Prevención de errores masivos y auditoría de operaciones críticas",
+      },
+      sugerencia:
+        "Si necesitas desactivar múltiples proveedores, contacta al supervisor o administrador del sistema",
+    });
+  },
+  skip: (req) => {
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter para CONSULTAS DE ESTADÍSTICAS
+ * Límite: 15 consultas cada 5 minutos
+ * 
+ * Contexto:
+ * - Consultas computacionalmente costosas (joins complejos)
+ * - Previene abuso de reportes pesados
+ */
+export const proveedoresReportLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutos
+  max: 15, // 15 consultas
+  message: {
+    error: "Demasiadas consultas de estadísticas de proveedores",
+    tipo: "proveedores_report_limit",
+    retry_after_seconds: 300,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `proveedores_report_user_${req.user.id}`
+      : `proveedores_report_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE REPORTES DE PROVEEDORES EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.id}\n` +
+        `   Endpoint: ${req.path}\n` +
+        `   Filtros: ${JSON.stringify(req.query)}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Demasiadas consultas de reportes en poco tiempo",
+      detalles: "Límite de 15 consultas cada 5 minutos",
+      retry_after_seconds: 300,
+      tipo: "report_rate_limit",
+      sugerencia: "Espera unos minutos antes de generar más reportes",
+    });
+  },
+});
+
+// =====================================================
+// 📦 RATE LIMITERS PARA USUARIOS (rateLimiters.js)
+// =====================================================
+// Agregar esto al archivo middleware/rateLimiters.js
+
+/**
+ * Rate limiter para CREAR/ACTUALIZAR USUARIOS
+ * Límite: 20 operaciones cada 15 minutos por usuario administrador
+ * 
+ * Contexto del negocio:
+ * - Solo 6 empleados totales
+ * - Operaciones de usuarios son infrecuentes (1-2/mes normalmente)
+ * - 20 operaciones en 15 min permite retrabajos por errores humanos
+ * - Más estricto que otras entidades por seguridad
+ */
+export const usuariosWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 20, // 20 operaciones de escritura
+  message: {
+    error: "Demasiadas operaciones de usuarios en poco tiempo",
+    tipo: "usuarios_write_limit",
+    retry_after_seconds: 900,
+    sugerencia: "Espera unos minutos antes de realizar más cambios",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Identificar por usuario administrador
+    return req.user
+      ? `usuarios_write_user_${req.user.id}`
+      : `usuarios_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE OPERACIONES DE USUARIOS EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Operación: ${req.method} ${req.path}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Límite de operaciones de usuarios excedido temporalmente",
+      detalles:
+        "Has realizado demasiadas operaciones en los últimos 15 minutos (máximo: 20)",
+      retry_after_seconds: 900,
+      tipo: "usuarios_rate_limit",
+      contexto: {
+        limite: 20,
+        ventana: "15 minutos",
+        razon: "Protección contra errores masivos y abuso del sistema",
+        usuario: req.user?.id || null,
+      },
+      sugerencia: "Si necesitas hacer cambios masivos, contacta al administrador del sistema",
+    });
+  },
+  skip: (req) => {
+    // Permitir ilimitado para rol "sistema" (procesos automáticos)
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter CRÍTICO para operaciones sensibles
+ * - Toggle estado (activar/desactivar usuarios)
+ * - Resetear contraseñas
+ * 
+ * Límite: 10 operaciones cada 15 minutos
+ * 
+ * Contexto:
+ * - Operaciones críticas que afectan acceso al sistema
+ * - Requieren auditoría estricta
+ * - 10 operaciones es suficiente incluso con errores
+ */
+export const criticalUsuarioLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10, // Solo 10 operaciones críticas
+  message: {
+    error: "Demasiadas operaciones críticas de usuarios",
+    tipo: "usuarios_critical_limit",
+    retry_after_seconds: 900,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `usuarios_critical_user_${req.user.id}`
+      : `usuarios_critical_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    const operacion = req.path.includes("toggle")
+      ? "Toggle estado"
+      : req.path.includes("resetear")
+      ? "Resetear contraseña"
+      : "Operación crítica";
+
+    console.error(
+      `🚨 OPERACIÓN CRÍTICA DE USUARIO BLOQUEADA POR RATE LIMIT:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id}, Rol: ${req.user?.rol})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Operación: ${operacion}\n` +
+        `   Usuario objetivo ID: ${req.params.id}\n` +
+        `   Timestamp: ${new Date().toISOString()}\n` +
+        `   ⚠️ ALERTA: Posible patrón anormal de operaciones críticas`
+    );
+
+    res.status(429).json({
+      error: "Límite de operaciones críticas excedido",
+      detalles:
+        "Solo se permiten 10 operaciones críticas cada 15 minutos por razones de seguridad",
+      retry_after_seconds: 900,
+      tipo: "critical_usuarios_limit",
+      contexto: {
+        limite: 10,
+        ventana: "15 minutos",
+        razon:
+          "Prevención de errores masivos y auditoría de operaciones que afectan acceso al sistema",
+      },
+      sugerencia:
+        "Si necesitas realizar múltiples operaciones críticas, contacta al supervisor o administrador del sistema",
+    });
+  },
+  skip: (req) => {
+    // Permitir ilimitado solo para rol "sistema"
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter para BÚSQUEDAS DE USUARIOS
+ * Límite: 30 búsquedas cada 5 minutos
+ * 
+ * Contexto:
+ * - Búsquedas con LIKE son costosas en MySQL
+ * - Con solo 6 empleados, 30 búsquedas en 5 min es muy generoso
+ * - Previene enumeración de cuentas
+ */
+export const usuariosSearchLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutos
+  max: 30, // 30 búsquedas
+  message: {
+    error: "Demasiadas búsquedas de usuarios en poco tiempo",
+    tipo: "usuarios_search_limit",
+    retry_after_seconds: 300,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `usuarios_search_user_${req.user.id}`
+      : `usuarios_search_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE BÚSQUEDAS DE USUARIOS EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.id}\n` +
+        `   Query: ${JSON.stringify(req.query)}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Demasiadas búsquedas en poco tiempo",
+      detalles: "Límite de 30 búsquedas cada 5 minutos",
+      retry_after_seconds: 300,
+      tipo: "search_rate_limit",
+      sugerencia: "Espera unos minutos antes de realizar más búsquedas",
+    });
+  },
+});
+
+// =====================================================
+// 📊 JUSTIFICACIÓN DE LÍMITES POR CONTEXTO DE NEGOCIO
+// =====================================================
+
+/*
+LÍMITES PARA GESTIÓN DE USUARIOS EN SUPERMERCADO:
+
+CREAR/ACTUALIZAR (usuariosWriteLimiter):
+- 20 operaciones / 15 min = 1.33 operaciones/min
+- Contexto: Solo 6 empleados, cambios infrecuentes (1-2/mes)
+- Permite retrabajos por errores humanos (ej: typo en email, rol incorrecto)
+- Más estricto que Proveedores (20 vs 20) pero igual ventana por seguridad
+
+OPERACIONES CRÍTICAS (criticalUsuarioLimiter):
+- 10 operaciones / 15 min = 0.66 operaciones/min
+- Contexto: Toggle estado y reset password son operaciones sensibles
+- Afectan directamente el acceso al sistema
+- 10 es suficiente incluso con varios errores consecutivos
+
+BÚSQUEDAS (usuariosSearchLimiter):
+- 30 búsquedas / 5 min = 6 búsquedas/min
+- Contexto: Solo 6 empleados, búsquedas son rápidas
+- Previene enumeración de cuentas (ataque de seguridad)
+- Similar a productos pero más estricto por datos sensibles
+
+COMPARACIÓN CON OTRAS ENTIDADES:
+- Ventas: 40/10min (alta frecuencia transaccional)
+- Productos: 30/10min (catálogo grande, cambios frecuentes)
+- Proveedores: 20/10min (cambios infrecuentes)
+- Usuarios: 20/15min (MÁS ESTRICTO por seguridad + ventana más larga)
+
+FILOSOFÍA: Seguridad > Conveniencia para gestión de usuarios
+*/
+
+// =====================================================
 // 🎯 CONFIGURACIÓN AVANZADA (OPCIONAL)
 // =====================================================
 
