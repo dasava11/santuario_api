@@ -1097,6 +1097,200 @@ FILOSOFÍA: Seguridad > Conveniencia para gestión de usuarios
 */
 
 // =====================================================
+// 📦 RATE LIMITERS PARA CATEGORÍAS
+// =====================================================
+
+/**
+ * Rate limiter para CREAR/ACTUALIZAR CATEGORÍAS
+ * Límite: 20 operaciones cada 10 minutos por usuario
+ * 
+ * Contexto del negocio:
+ * - Supermercado con ~50 categorías promedio
+ * - Operaciones MUY infrecuentes (nuevas categorías: 1-2/mes)
+ * - Solo 2 roles pueden modificar (admin/dueño)
+ * - 20 operaciones en 10 min es MUY generoso
+ */
+export const categoriasWriteLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutos
+  max: 20, // 20 operaciones
+  message: {
+    error: "Demasiadas operaciones de categorías en poco tiempo",
+    tipo: "categorias_write_limit",
+    retry_after_seconds: 600,
+    sugerencia: "Espera unos minutos antes de realizar más cambios",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `categorias_write_user_${req.user.id}`
+      : `categorias_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE OPERACIONES DE CATEGORÍAS EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Operación: ${req.method} ${req.path}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Límite de operaciones de categorías excedido temporalmente",
+      detalles:
+        "Has realizado demasiadas operaciones en los últimos 10 minutos (máximo: 20)",
+      retry_after_seconds: 600,
+      tipo: "categorias_rate_limit",
+      contexto: {
+        limite: 20,
+        ventana: "10 minutos",
+        usuario: req.user?.id || null,
+      },
+    });
+  },
+  skip: (req) => {
+    // Permitir ilimitado para rol "sistema" (procesos automáticos)
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter CRÍTICO para DESACTIVAR CATEGORÍAS
+ * Límite: 5 desactivaciones cada 15 minutos
+ * 
+ * Contexto del negocio:
+ * - Desactivar categoría es operación sensible
+ * - Puede afectar productos asociados
+ * - Requiere validación de impacto
+ * - 5 desactivaciones en 15 min es razonable
+ */
+export const criticalCategoriaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 5, // Solo 5 desactivaciones
+  message: {
+    error: "Demasiadas desactivaciones de categorías",
+    tipo: "categorias_delete_limit",
+    retry_after_seconds: 900,
+    sugerencia:
+      "Las desactivaciones masivas requieren supervisión del administrador",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `categorias_delete_user_${req.user.id}`
+      : `categorias_delete_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    const categoriaId = req.params.id;
+
+    console.error(
+      `🚨 DESACTIVACIÓN DE CATEGORÍA BLOQUEADA POR RATE LIMIT:\n` +
+        `   Usuario: ${req.user?.nombre} ${req.user?.apellido} (ID: ${req.user?.id}, Rol: ${req.user?.rol})\n` +
+        `   IP: ${req.ip}\n` +
+        `   Categoría ID: ${categoriaId}\n` +
+        `   Timestamp: ${new Date().toISOString()}\n` +
+        `   ⚠️ ALERTA: Posible patrón anormal de desactivaciones`
+    );
+
+    res.status(429).json({
+      error: "Límite de desactivaciones de categorías excedido",
+      detalles:
+        "Solo se permiten 5 desactivaciones cada 15 minutos por razones de seguridad",
+      retry_after_seconds: 900,
+      tipo: "critical_delete_limit",
+      contexto: {
+        limite: 5,
+        ventana: "15 minutos",
+        razon:
+          "Prevención de errores masivos y auditoría de operaciones críticas",
+      },
+      sugerencia:
+        "Si necesitas desactivar múltiples categorías, contacta al supervisor o administrador del sistema",
+    });
+  },
+  skip: (req) => {
+    return req.user?.rol === "sistema";
+  },
+});
+
+/**
+ * Rate limiter para CONSULTAS DE ESTADÍSTICAS
+ * Límite: 15 consultas cada 5 minutos
+ * 
+ * Contexto:
+ * - Consultas computacionalmente costosas (joins complejos)
+ * - Previene abuso de reportes pesados
+ */
+export const categoriasReportLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutos
+  max: 15, // 15 consultas
+  message: {
+    error: "Demasiadas consultas de estadísticas de categorías",
+    tipo: "categorias_report_limit",
+    retry_after_seconds: 300,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user
+      ? `categorias_report_user_${req.user.id}`
+      : `categorias_report_ip_${req.ip}`;
+  },
+  handler: (req, res) => {
+    console.warn(
+      `⚠️ LÍMITE DE REPORTES DE CATEGORÍAS EXCEDIDO:\n` +
+        `   Usuario: ${req.user?.id}\n` +
+        `   Endpoint: ${req.path}\n` +
+        `   Filtros: ${JSON.stringify(req.query)}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
+    );
+
+    res.status(429).json({
+      error: "Demasiadas consultas de reportes en poco tiempo",
+      detalles: "Límite de 15 consultas cada 5 minutos",
+      retry_after_seconds: 300,
+      tipo: "report_rate_limit",
+      sugerencia: "Espera unos minutos antes de generar más reportes",
+    });
+  },
+});
+
+// =====================================================
+// 📊 JUSTIFICACIÓN DE LÍMITES POR CONTEXTO DE NEGOCIO
+// =====================================================
+
+/*
+LÍMITES PARA GESTIÓN DE CATEGORÍAS EN SUPERMERCADO:
+
+CREAR/ACTUALIZAR (categoriasWriteLimiter):
+- 20 operaciones / 10 min = 2 operaciones/min
+- Contexto: ~50 categorías totales, cambios MUY infrecuentes (1-2/mes)
+- 20 operaciones permite múltiples retrabajos por errores humanos
+- Más estricto que Proveedores (20 en 10min) pero igual ventana
+
+DESACTIVAR (criticalCategoriaLimiter):
+- 5 desactivaciones / 15 min = 0.33 desactivaciones/min
+- Contexto: Operación crítica que afecta productos asociados
+- Requiere validación de productos activos antes de desactivar
+- 5 es suficiente incluso con varios errores consecutivos
+
+ESTADÍSTICAS (categoriasReportLimiter):
+- 15 consultas / 5 min = 3 consultas/min
+- Contexto: Queries pesados con agregaciones de productos
+- Previene sobrecarga del servidor por dashboards mal configurados
+- Similar a Proveedores pero mismo límite por complejidad similar
+
+COMPARACIÓN CON OTRAS ENTIDADES:
+- Ventas: 40/10min (alta frecuencia transaccional)
+- Productos: 30/10min (catálogo grande, cambios frecuentes)
+- Proveedores: 20/10min (cambios infrecuentes)
+- Categorías: 20/10min (cambios MUY infrecuentes, catálogo pequeño)
+
+FILOSOFÍA: Límites generosos pero con auditoría estricta
+*/
+
+// =====================================================
 // 🎯 CONFIGURACIÓN AVANZADA (OPCIONAL)
 // =====================================================
 
