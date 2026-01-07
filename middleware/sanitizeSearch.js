@@ -17,26 +17,26 @@ const defaultOptions = {
  */
 export const sanitizeString = (value, opts = {}) => {
   if (value === null || value === undefined) return value;
-  let s = String(value);
+  let sanitizedString = String(value);
 
   if (opts.escapeWildcards) {
     // Escapa % _ y backslash para que LIKE sea literal
-    s = s.replace(/([%_\\])/g, "\\$1");
+    sanitizedString = sanitizedString.replace(/([%_\\])/g, "\\$1");
   }
 
   if (opts.removeDangerousChars) {
     // Elimina caracteres que suelen causar problemas en YAML/HTML/SQL displayed text
-    s = s.replace(/[<>\"'`]/g, "");
+    sanitizedString = sanitizedString.replace(/[<>\"'`]/g, "");
   }
 
   // Normalizar espacios, acentos si se desea (opcional)
-  s = s.trim();
+  sanitizedString = sanitizedString.trim();
 
-  if (opts.maxLength && s.length > opts.maxLength) {
-    s = s.substring(0, opts.maxLength);
+  if (opts.maxLength && sanitizedString.length > opts.maxLength) {
+    sanitizedString = sanitizedString.substring(0, opts.maxLength);
   }
 
-  return s;
+  return sanitizedString;
 };
 
 /**
@@ -78,10 +78,10 @@ export const sanitizeSearch = (options = {}) => {
         if (opts.allBodyStrings) {
           // sanitizar recursivamente todos los strings del body (cuidado con objetos grandes)
           const walk = (obj) => {
-            for (const k of Object.keys(obj)) {
-              const v = obj[k];
-              if (typeof v === "string") obj[k] = sanitizeString(v, opts);
-              else if (v && typeof v === "object" && !Array.isArray(v)) walk(v);
+            for (const key of Object.keys(obj)) {
+              const value = obj[key];
+              if (typeof value === "string") obj[key] = sanitizeString(value, opts);
+              else if (value && typeof value === "object" && !Array.isArray(value)) walk(value);
             }
           };
           walk(req.body);

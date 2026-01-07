@@ -136,7 +136,7 @@ export default (sequelize) => {
           using: "BTREE",
           fields: [{ name: "producto_id" }],
         },
-        // ✅ NUEVO: Índice único para evitar productos duplicados en misma recepción
+        // Índice único para evitar productos duplicados en misma recepción
         {
           name: "idx_detalle_recepcion_producto_unique",
           unique: true,
