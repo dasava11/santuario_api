@@ -8,7 +8,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "check:timestamps": "node check-timestamps.js",
-    "migrate:timestamps": "node migrate-all-timestamps.js"
+    "migrate:timestamps": "node migrate-all-timestamps.js",
+    "diagnose:timestamps": "node diagnose-timestamps.js",
+    "fix:timestamps": "node fix-missing-timestamps.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

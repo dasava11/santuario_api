@@ -28,12 +28,12 @@ export default (sequelize) => {
         validate: {
           min: {
             args: [0.001],
-            msg: "La cantidad debe ser mayor a 0"
+            msg: "La cantidad debe ser mayor a 0",
           },
           isDecimal: {
-            msg: "La cantidad debe ser un número decimal válido"
-          }
-        }
+            msg: "La cantidad debe ser un número decimal válido",
+          },
+        },
       },
       stock_anterior: {
         type: DataTypes.DECIMAL(10, 3),
@@ -73,6 +73,8 @@ export default (sequelize) => {
       sequelize,
       tableName: "movimientos_inventario",
       timestamps: true,
+      createdAt: "fecha_movimiento",
+      updatedAt: "updated_at",
       indexes: [
         {
           name: "PRIMARY",
