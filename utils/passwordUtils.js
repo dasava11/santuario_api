@@ -108,3 +108,5 @@ const validatePasswordStrength = (password) => {
 };
 
 export { hashPassword, comparePassword, validatePasswordStrength };
+
+hashPassword("P@ss246word").then(console.log);

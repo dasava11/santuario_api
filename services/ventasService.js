@@ -1,5 +1,5 @@
 // services/ventasService.js - Lógica de Negocio Pura
-import { sequelize, Op, fn, col } from "../config/database.js";
+import { sequelize, Op } from "../config/database.js";
 import db from "../models/index.js";
 import {
   cacheGet,
@@ -16,7 +16,7 @@ import {
 import {
   registrarMovimiento,
   actualizarStockAtomico,
-} from "./inventarioServices.js";
+} from "./inventarioService.js";
 
 const { ventas, detalle_ventas, usuarios, productos, movimientos_inventario } =
   db;
@@ -221,16 +221,16 @@ const validarProductosYStock = async (productosVenta, transaction) => {
 
 /**
  * Genera número de venta único con verificación de duplicados
- * 
+ *
  * Formato: V{YYYYMMDD}-{timestamp}{random}
  * Ejemplo: V20241215-1734293847283abc4
- * 
+ *
  * ✅ MEJORAS:
  * - Verificación dentro de transacción (previene race conditions)
  * - Sufijo aleatorio adicional para evitar colisiones
  * - Reintentos automáticos (máx 5)
  * - Error explícito si no se logra generar
- * 
+ *
  * @param {Transaction} transaction - Transacción de Sequelize
  * @returns {Promise<string>} Número de venta único
  * @throws {Error} NO_SE_PUDO_GENERAR_NUMERO_VENTA_UNICO
@@ -249,7 +249,12 @@ const generarNumeroVentaSeguro = async (transaction) => {
       const random = Math.random().toString(36).substring(2, 6);
 
       // Formato: V{YYYYMMDD}-{timestamp}{random}
-      const numeroVenta = `V${fecha.getFullYear()}${String(fecha.getMonth() + 1).padStart(2, "0")}${String(fecha.getDate()).padStart(2, "0")}-${timestamp}${random}`;
+      const numeroVenta = `V${fecha.getFullYear()}${String(
+        fecha.getMonth() + 1
+      ).padStart(2, "0")}${String(fecha.getDate()).padStart(
+        2,
+        "0"
+      )}-${timestamp}${random}`;
 
       // ✅ CRÍTICO: Verificar unicidad dentro de la transacción
       const existe = await ventas.findOne({
@@ -260,7 +265,11 @@ const generarNumeroVentaSeguro = async (transaction) => {
 
       if (!existe) {
         // Log de auditoría
-        console.log(`✅ Número de venta generado: ${numeroVenta} (intento ${intentos + 1})`);
+        console.log(
+          `✅ Número de venta generado: ${numeroVenta} (intento ${
+            intentos + 1
+          })`
+        );
         return numeroVenta;
       }
 
@@ -271,8 +280,9 @@ const generarNumeroVentaSeguro = async (transaction) => {
       );
 
       // Esperar 1-5ms antes de reintentar (evitar colisiones en bucle)
-      await new Promise(resolve => setTimeout(resolve, Math.random() * 5 + 1));
-
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * 5 + 1)
+      );
     } catch (error) {
       intentos++;
       console.error(
@@ -371,13 +381,13 @@ const crearVenta = async (datosVenta, usuarioId) => {
     // Log de auditoría de venta exitosa
     console.log(
       `✅ VENTA CREADA EXITOSAMENTE:\n` +
-      `   Número: ${numeroVenta}\n` +
-      `   ID: ${nuevaVenta.id}\n` +
-      `   Total: $${total.toFixed(2)}\n` +
-      `   Método: ${metodo_pago}\n` +
-      `   Productos: ${productosValidados.length}\n` +
-      `   Usuario: ${usuarioId}\n` +
-      `   Timestamp: ${new Date().toISOString()}`
+        `   Número: ${numeroVenta}\n` +
+        `   ID: ${nuevaVenta.id}\n` +
+        `   Total: $${total.toFixed(2)}\n` +
+        `   Método: ${metodo_pago}\n` +
+        `   Productos: ${productosValidados.length}\n` +
+        `   Usuario: ${usuarioId}\n` +
+        `   Timestamp: ${new Date().toISOString()}`
     );
 
     // Invalidar caché (cascada)
@@ -390,10 +400,10 @@ const crearVenta = async (datosVenta, usuarioId) => {
     if (error.message === "NO_SE_PUDO_GENERAR_NUMERO_VENTA_UNICO") {
       console.error(
         `🚨 ERROR CRÍTICO: No se pudo generar número de venta único\n` +
-        `   Usuario: ${usuarioId}\n` +
-        `   Productos: ${datosVenta.productos?.length || 0}\n` +
-        `   Timestamp: ${new Date().toISOString()}\n` +
-        `   Acción requerida: Verificar carga del sistema`
+          `   Usuario: ${usuarioId}\n` +
+          `   Productos: ${datosVenta.productos?.length || 0}\n` +
+          `   Timestamp: ${new Date().toISOString()}\n` +
+          `   Acción requerida: Verificar carga del sistema`
       );
 
       // Re-throw con mensaje más amigable
@@ -628,7 +638,9 @@ const obtenerResumenVentas = async (filtros = {}) => {
  * Prueba la generación de números de venta bajo carga
  */
 const testGeneracionConcurrenteNumeroVenta = async (numVentas = 100) => {
-  console.log(`🧪 TEST: Generando ${numVentas} números de venta concurrentes...`);
+  console.log(
+    `🧪 TEST: Generando ${numVentas} números de venta concurrentes...`
+  );
 
   const start = Date.now();
   const promises = [];
@@ -652,19 +664,19 @@ const testGeneracionConcurrenteNumeroVenta = async (numVentas = 100) => {
 
   try {
     const resultados = await Promise.all(promises);
-    resultados.forEach(num => numerosGenerados.add(num));
+    resultados.forEach((num) => numerosGenerados.add(num));
 
     const duration = Date.now() - start;
     const duplicados = resultados.length - numerosGenerados.size;
 
     console.log(
       `✅ TEST COMPLETADO:\n` +
-      `   Intentos: ${numVentas}\n` +
-      `   Exitosos: ${resultados.length}\n` +
-      `   Únicos: ${numerosGenerados.size}\n` +
-      `   Duplicados: ${duplicados}\n` +
-      `   Tiempo: ${duration}ms\n` +
-      `   Promedio: ${(duration / numVentas).toFixed(2)}ms/venta`
+        `   Intentos: ${numVentas}\n` +
+        `   Exitosos: ${resultados.length}\n` +
+        `   Únicos: ${numerosGenerados.size}\n` +
+        `   Duplicados: ${duplicados}\n` +
+        `   Tiempo: ${duration}ms\n` +
+        `   Promedio: ${(duration / numVentas).toFixed(2)}ms/venta`
     );
 
     return {

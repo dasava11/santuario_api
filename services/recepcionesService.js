@@ -15,7 +15,7 @@ import {
 import {
   actualizarStockAtomico,
   registrarMovimiento,
-} from "./inventarioServices.js";
+} from "./inventarioService.js";
 
 const {
   recepciones,

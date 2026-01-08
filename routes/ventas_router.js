@@ -29,9 +29,9 @@ import {
   validateVentaId,
   validateVentasQuery,
   validateResumenQuery,
-  validateAnularVenta,
+  validateVentaAnulacion,
   validateProductosBusinessRules,
-} from "../validations/ventasValidations.js";
+} from "../validations/ventas_validations.js";
 
 const router = express.Router();
 
@@ -201,12 +201,12 @@ router.get(
 // =====================================================
 /**
  * @swagger
-* /ventas:
+ * /ventas:
  *   post:
  *     summary: Crear nueva venta
  *     description: |
  *       Crea una venta con validación de stock y actualización atómica de inventario.
- *       
+ *
  *       **Límites de Rate Limiting:**
  *       - Máximo 40 ventas cada 10 minutos por cajero
  *       - Diseñado para permitir picos de horas punta (4 ventas/min)
@@ -286,12 +286,12 @@ router.post(
  *     summary: Anular venta (eliminación lógica con reversión de stock)
  *     description: |
  *       Anula una venta y revierte el inventario automáticamente.
- *       
+ *
  *       **Restricciones:**
  *       - Solo ventas con menos de 24 horas pueden ser anuladas
  *       - Requiere motivo de anulación (mínimo 10 caracteres)
  *       - Solo roles: administrador, dueño
- *       
+ *
  *       **Límites de Rate Limiting:**
  *       - Máximo 10 anulaciones cada 15 minutos
  *       - Operación crítica con auditoría completa
@@ -348,7 +348,7 @@ router.delete(
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateVentaId,
-  validateAnularVenta,
+  validateVentaAnulacion,
   eliminarVenta
 );
 

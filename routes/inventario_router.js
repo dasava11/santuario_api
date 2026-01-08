@@ -18,7 +18,7 @@ import {
 import { verifyToken, verifyRole } from "../middleware/auth.js";
 
 // Middleware de sanitización
-import { sanitizeSearch } from "../middlewares/sanitizeSearch.js";
+import { sanitizeSearch } from "../middleware/sanitizeSearch.js";
 
 // Validaciones específicas
 import {
@@ -36,7 +36,7 @@ import {
   inventoryWriteLimiter,
   criticalAdjustLimiter,
   reportLimiter,
-} from "../middlewares/rateLimiters.js";
+} from "../middleware/rateLimiters.js";
 
 const router = express.Router();
 

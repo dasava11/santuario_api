@@ -407,14 +407,14 @@ const obtenerResumenInventario = async () => {
     rotacion_promedio:
       totalProductos > 0
         ? (
-          movimientosRecientes.reduce(
-            (acc, mov) =>
-              mov.tipo_movimiento === "salida"
-                ? acc + parseInt(mov.cantidad)
-                : acc,
-            0
-          ) / totalProductos
-        ).toFixed(2)
+            movimientosRecientes.reduce(
+              (acc, mov) =>
+                mov.tipo_movimiento === "salida"
+                  ? acc + parseInt(mov.cantidad)
+                  : acc,
+              0
+            ) / totalProductos
+          ).toFixed(2)
         : 0,
 
     porcentaje_stock_bajo:
@@ -504,8 +504,8 @@ const obtenerValorInventario = async () => {
   totales.porcentaje_margen =
     totales.valor_compra_total > 0
       ? ((totales.margen_potencial / totales.valor_compra_total) * 100).toFixed(
-        2
-      )
+          2
+        )
       : 0;
 
   const result = {
@@ -1023,7 +1023,7 @@ const ajustarInventario = async (
           `AJUSTE_CRITICO_REQUIERE_JUSTIFICACION:${diferenciaPorcentaje.toFixed(
             1
           )}:` +
-          `Ajustes mayores al ${UMBRAL_AJUSTE_CRITICO}% requieren observaciones detalladas (mínimo 20 caracteres)`
+            `Ajustes mayores al ${UMBRAL_AJUSTE_CRITICO}% requieren observaciones detalladas (mínimo 20 caracteres)`
         );
       }
     }
@@ -1035,12 +1035,12 @@ const ajustarInventario = async (
     ) {
       console.warn(
         `⚠️ AJUSTE SIGNIFICATIVO DETECTADO:\n` +
-        `   Producto: ${producto.nombre} (ID: ${productoId})\n` +
-        `   Stock anterior: ${stockAnterior}\n` +
-        `   Stock nuevo: ${nuevoStockFloat}\n` +
-        `   Cambio: ${diferenciaPorcentaje.toFixed(1)}%\n` +
-        `   Usuario: ${usuarioId}\n` +
-        `   Observaciones: ${observaciones || "Sin observaciones"}`
+          `   Producto: ${producto.nombre} (ID: ${productoId})\n` +
+          `   Stock anterior: ${stockAnterior}\n` +
+          `   Stock nuevo: ${nuevoStockFloat}\n` +
+          `   Cambio: ${diferenciaPorcentaje.toFixed(1)}%\n` +
+          `   Usuario: ${usuarioId}\n` +
+          `   Observaciones: ${observaciones || "Sin observaciones"}`
       );
     }
 
@@ -1064,8 +1064,8 @@ const ajustarInventario = async (
     const descripcionAjuste = observaciones
       ? observaciones.trim()
       : `Ajuste de inventario: ${tipoAjusteDescriptivo} de ${Math.abs(
-        diferencia
-      ).toFixed(3)} unidades (${diferenciaPorcentaje.toFixed(1)}% cambio)`;
+          diferencia
+        ).toFixed(3)} unidades (${diferenciaPorcentaje.toFixed(1)}% cambio)`;
 
     await movimientos_inventario.create(
       {
@@ -1101,11 +1101,12 @@ const ajustarInventario = async (
 
     console.log(
       `✅ AJUSTE DE INVENTARIO EXITOSO:\n` +
-      `   Producto: ${producto.nombre} (${producto.categoria.nombre})\n` +
-      `   Stock: ${stockAnterior} → ${nuevoStockFloat} (${diferencia > 0 ? "+" : ""
-      }${diferencia.toFixed(3)})\n` +
-      `   Usuario: ${usuarioId}\n` +
-      `   Fecha: ${new Date().toISOString()}`
+        `   Producto: ${producto.nombre} (${producto.categoria.nombre})\n` +
+        `   Stock: ${stockAnterior} → ${nuevoStockFloat} (${
+          diferencia > 0 ? "+" : ""
+        }${diferencia.toFixed(3)})\n` +
+        `   Usuario: ${usuarioId}\n` +
+        `   Fecha: ${new Date().toISOString()}`
     );
 
     // ====================================================
@@ -1151,7 +1152,7 @@ const ajustarInventario = async (
  * @returns {Promise<Object>} Movimiento creado
  */
 
-export const registrarMovimiento = async (datos, transaction) => {
+const registrarMovimiento = async (datos, transaction) => {
   const {
     producto_id,
     tipo_movimiento,
@@ -1192,12 +1193,12 @@ export const registrarMovimiento = async (datos, transaction) => {
   // Log de auditoría
   console.log(
     `📝 MOVIMIENTO REGISTRADO:\n` +
-    `   Tipo: ${tipo_movimiento.toUpperCase()}\n` +
-    `   Producto ID: ${producto_id}\n` +
-    `   Cantidad: ${cantidad}\n` +
-    `   Stock: ${stock_anterior} → ${stock_nuevo}\n` +
-    `   Referencia: ${referencia_tipo} #${referencia_id || "N/A"}\n` +
-    `   Usuario: ${usuario_id}`
+      `   Tipo: ${tipo_movimiento.toUpperCase()}\n` +
+      `   Producto ID: ${producto_id}\n` +
+      `   Cantidad: ${cantidad}\n` +
+      `   Stock: ${stock_anterior} → ${stock_nuevo}\n` +
+      `   Referencia: ${referencia_tipo} #${referencia_id || "N/A"}\n` +
+      `   Usuario: ${usuario_id}`
   );
 
   return movimiento;
@@ -1206,6 +1207,12 @@ export const registrarMovimiento = async (datos, transaction) => {
 // =====================================================
 // EXPORTACIONES
 // =====================================================
+export {
+  // Función atómica (para uso interno y desde otros módulos)
+  actualizarStockAtomico,
+  registrarMovimiento,
+};
+
 export default {
   // Consultas - Movimientos
   obtenerMovimientosFiltrados,
@@ -1225,8 +1232,4 @@ export default {
   // Operaciones
   actualizarStock,
   ajustarInventario,
-
-  // Función atómica (para uso interno y desde otros módulos)
-  actualizarStockAtomico,
-  registrarMovimiento,
 };

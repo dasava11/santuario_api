@@ -48,7 +48,7 @@ const router = express.Router();
  *     description: |
  *       Lista usuarios del sistema con opciones de filtrado por rol y estado activo.
  *       Incluye paginación para manejar grandes conjuntos de datos.
- *       
+ *
  *       **Contexto del negocio:**
  *       - Supermercado con 6 empleados
  *       - Filtros útiles para dashboard administrativo
@@ -95,38 +95,6 @@ const router = express.Router();
  *     responses:
  *       200:
  *         description: Lista de usuarios obtenida exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
- *                   properties:
- *                     usuarios:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Usuario'
- *                     pagination:
- *                       $ref: '#/components/schemas/Pagination'
- *                 metadata:
- *                   type: object
- *                   properties:
- *                     total_usuarios:
- *                       type: integer
- *                     filtro_rol:
- *                       type: string
- *                       nullable: true
- *                     filtro_activo:
- *                       type: string
- *                     timestamp:
- *                       type: string
- *                       format: date-time
- *                 cache_info:
- *                   $ref: '#/components/schemas/CacheInfo'
  *       400:
  *         description: Parámetros de consulta inválidos
  *       401:
@@ -137,288 +105,15 @@ const router = express.Router();
 router.get(
   "/",
   sanitizeSearch({
-    paramFields: ["id"],
-    maxLength: 20,
+    queryFields: ["rol", "activo"],
+    maxLength: 50,
     removeDangerousChars: true,
   }),
-  verifyToken,
-  verifyRole(["administrador", "dueño"]),
-  validateUsuarioId,
-  validateResetPassword,
-  resetearPassword
-);
-
-// =====================================================
-// 📋 SWAGGER COMPONENTS - SCHEMAS Y DEFINICIONES
-// =====================================================
-/**
- * @swagger
- * components:
- *   securitySchemes:
- *     bearerAuth:
- *       type: http
- *       scheme: bearer
- *       bearerFormat: JWT
- *       description: Token JWT obtenido del endpoint /api/auth/login
- * 
- *   schemas:
- *     Usuario:
- *       type: object
- *       properties:
- *         id:
- *           type: integer
- *           description: ID único del usuario
- *           example: 1
- *         username:
- *           type: string
- *           description: Nombre de usuario
- *           example: "jperez"
- *         email:
- *           type: string
- *           format: email
- *           description: Email del usuario
- *           example: "jperez@example.com"
- *         nombre:
- *           type: string
- *           description: Nombre(s) del usuario
- *           example: "Juan"
- *         apellido:
- *           type: string
- *           description: Apellido(s) del usuario
- *           example: "Pérez"
- *         rol:
- *           type: string
- *           enum: [administrador, cajero, dueño, ayudante]
- *           description: Rol del usuario en el sistema
- *           example: "cajero"
- *         activo:
- *           type: boolean
- *           description: Estado del usuario (true = activo, false = inactivo)
- *           example: true
- *         fecha_creacion:
- *           type: string
- *           format: date-time
- *           description: Fecha de creación del usuario
- *           example: "2024-01-15T10:30:00.000Z"
- *         fecha_actualizacion:
- *           type: string
- *           format: date-time
- *           description: Última actualización del registro
- *           example: "2024-12-20T15:45:00.000Z"
- *       required:
- *         - id
- *         - username
- *         - email
- *         - nombre
- *         - apellido
- *         - rol
- *         - activo
- * 
- *     Pagination:
- *       type: object
- *       properties:
- *         page:
- *           type: integer
- *           description: Página actual
- *           example: 1
- *         limit:
- *           type: integer
- *           description: Límite de resultados por página
- *           example: 20
- *         total:
- *           type: integer
- *           description: Total de registros
- *           example: 6
- *         pages:
- *           type: integer
- *           description: Total de páginas
- *           example: 1
- * 
- *     CacheInfo:
- *       type: object
- *       properties:
- *         from_cache:
- *           type: boolean
- *           description: Indica si la respuesta proviene del caché
- *           example: true
- *         cache_timestamp:
- *           type: string
- *           format: date-time
- *           description: Timestamp del caché
- *           example: "2024-12-22T10:30:00.000Z"
- * 
- *     RateLimitError:
- *       type: object
- *       properties:
- *         error:
- *           type: string
- *           description: Mensaje de error
- *           example: "Límite de operaciones de usuarios excedido temporalmente"
- *         detalles:
- *           type: string
- *           description: Detalles del límite excedido
- *           example: "Has realizado demasiadas operaciones en los últimos 15 minutos (máximo: 20)"
- *         retry_after_seconds:
- *           type: integer
- *           description: Segundos hasta que pueda reintentar
- *           example: 900
- *         tipo:
- *           type: string
- *           description: Tipo de límite excedido
- *           enum: [usuarios_write_limit, usuarios_critical_limit, usuarios_search_limit]
- *           example: "usuarios_write_limit"
- *         contexto:
- *           type: object
- *           properties:
- *             limite:
- *               type: integer
- *               description: Límite máximo permitido
- *               example: 20
- *             ventana:
- *               type: string
- *               description: Ventana de tiempo del límite
- *               example: "15 minutos"
- *             razon:
- *               type: string
- *               description: Razón del límite
- *               example: "Protección contra errores masivos y abuso del sistema"
- *             usuario:
- *               type: integer
- *               nullable: true
- *               description: ID del usuario que excedió el límite
- *               example: 1
- *         sugerencia:
- *           type: string
- *           description: Sugerencia para el usuario
- *           example: "Si necesitas hacer cambios masivos, contacta al administrador del sistema"
- * 
- *     RateLimitInfo:
- *       type: object
- *       description: Información sobre los límites de rate limiting aplicados
- *       properties:
- *         usuarios_crear_actualizar:
- *           type: object
- *           properties:
- *             limite:
- *               type: integer
- *               example: 20
- *             ventana:
- *               type: string
- *               example: "15 minutos"
- *             descripcion:
- *               type: string
- *               example: "Permite retrabajos por errores humanos, más estricto por seguridad"
- *         usuarios_operaciones_criticas:
- *           type: object
- *           properties:
- *             limite:
- *               type: integer
- *               example: 10
- *             ventana:
- *               type: string
- *               example: "15 minutos"
- *             descripcion:
- *               type: string
- *               example: "Toggle estado y reset password - operaciones que afectan acceso al sistema"
- *         usuarios_busquedas:
- *           type: object
- *           properties:
- *             limite:
- *               type: integer
- *               example: 30
- *             ventana:
- *               type: string
- *               example: "5 minutos"
- *             descripcion:
- *               type: string
- *               example: "Previene enumeración de cuentas y abuso de búsquedas costosas"
- * 
- *   responses:
- *     UnauthorizedError:
- *       description: Token de autenticación no proporcionado o inválido
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               error:
- *                 type: string
- *                 example: "Token de acceso requerido"
- * 
- *     ForbiddenError:
- *       description: Permisos insuficientes para realizar la operación
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               error:
- *                 type: string
- *                 example: "No tienes permisos para realizar esta acción"
- *               requiredRoles:
- *                 type: array
- *                 items:
- *                   type: string
- *                 example: ["administrador", "dueño"]
- *               userRole:
- *                 type: string
- *                 example: "cajero"
- * 
- *     NotFoundError:
- *       description: Recurso no encontrado
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               success:
- *                 type: boolean
- *                 example: false
- *               error:
- *                 type: object
- *                 properties:
- *                   message:
- *                     type: string
- *                     example: "Usuario no encontrado"
- *                   code:
- *                     type: integer
- *                     example: 400
- *                   timestamp:
- *                     type: string
- *                     format: date-time
- * 
- *   tags:
- *     - name: Usuarios
- *       description: |
- *         Gestión de usuarios del sistema.
- *         
- *         **Contexto del negocio:**
- *         - Supermercado con 6 empleados
- *         - Roles: administrador, cajero, dueño, ayudante
- *         - Operaciones infrecuentes (1-2 usuarios/mes)
- *         
- *         **Rate Limiting:**
- *         - Crear/Actualizar: 20 ops / 15 min
- *         - Operaciones críticas: 10 ops / 15 min
- *         - Búsquedas: 30 búsquedas / 5 min
- *         
- *         **Seguridad:**
- *         - Contraseñas hasheadas con bcrypt
- *         - Validación de unicidad (username, email)
- *         - Protección contra auto-modificación crítica
- *         - Invalidación automática de sesiones en cambios de password
- */
-router.get({
-  queryFields: ["rol", "activo"],
-  maxLength: 50,
-  removeDangerousChars: true,
-},
   verifyToken,
   verifyRole(["administrador", "dueño"]),
   validateGetUsuariosQuery,
   obtenerUsuarios
 );
-
 // =====================================================
 // 🔍 BUSCAR USUARIOS (CON RATE LIMITER)
 // =====================================================
@@ -430,11 +125,11 @@ router.get({
  *     description: |
  *       Búsqueda flexible de usuarios por múltiples campos.
  *       Utiliza LIKE para coincidencias parciales.
- *       
+ *
  *       **Rate Limiting:**
  *       - Máximo 30 búsquedas cada 5 minutos por usuario
  *       - Previene enumeración de cuentas y abuso del sistema
- *       
+ *
  *       **Contexto:**
  *       - Búsquedas con LIKE son costosas en MySQL
  *       - Con 6 empleados, 30 búsquedas/5min es muy generoso
@@ -588,18 +283,18 @@ router.get(
  *     summary: Crear nuevo usuario
  *     description: |
  *       Crea un nuevo usuario en el sistema con validaciones robustas.
- *       
+ *
  *       **Rate Limiting:**
  *       - Máximo 20 operaciones cada 15 minutos por administrador
  *       - Permite retrabajos por errores humanos
  *       - Más estricto que otras entidades por seguridad
- *       
+ *
  *       **Validaciones:**
  *       - Username único (case-insensitive)
  *       - Email único (case-insensitive)
  *       - Password debe cumplir requisitos de seguridad
  *       - Contraseña se hashea automáticamente con bcrypt
- *       
+ *
  *       **Contexto del negocio:**
  *       - Supermercado con 6 empleados
  *       - Operaciones infrecuentes (1-2 usuarios/mes)
@@ -758,16 +453,16 @@ router.post(
  *     summary: Actualizar usuario existente
  *     description: |
  *       Actualiza uno o más campos de un usuario existente.
- *       
+ *
  *       **Rate Limiting:**
  *       - Máximo 20 operaciones cada 15 minutos
- *       
+ *
  *       **Validaciones:**
  *       - Username único si se cambia
  *       - Email único si se cambia
  *       - Password requiere confirmación si se cambia
  *       - Al menos un campo debe ser actualizado
- *       
+ *
  *       **Nota:** Si se cambia la contraseña, se invalidan todas las sesiones activas del usuario.
  *     tags: [Usuarios]
  *     security:
@@ -903,11 +598,11 @@ router.put(
  *     description: |
  *       Activa o desactiva un usuario en el sistema.
  *       Operación crítica que afecta el acceso al sistema.
- *       
+ *
  *       **Rate Limiting CRÍTICO:**
  *       - Máximo 10 operaciones cada 15 minutos
  *       - Límite más estricto por impacto en seguridad
- *       
+ *
  *       **Restricciones:**
  *       - No puede desactivar su propia cuenta
  *       - Usuario desactivado no puede autenticarse
@@ -1011,16 +706,16 @@ router.patch(
  *     description: |
  *       Resetea la contraseña de un usuario (solo para administradores).
  *       El usuario objetivo debe cambiarla en su próximo login.
- *       
+ *
  *       **Rate Limiting CRÍTICO:**
  *       - Máximo 10 operaciones cada 15 minutos
  *       - Operación sensible con auditoría completa
- *       
+ *
  *       **Restricciones:**
  *       - No puede resetear su propia contraseña (usar /auth/cambiar-password)
  *       - Se invalidan todas las sesiones activas del usuario objetivo
  *       - Requiere rol administrador o dueño
- *       
+ *
  *       **Seguridad:**
  *       - Contraseña se hashea automáticamente
  *       - Operación queda registrada en logs
@@ -1140,7 +835,6 @@ router.post(
 // =====================================================
 // 📋 SWAGGER COMPONENTS - USUARIOS
 // =====================================================
-// Agregar al final de usuarios_router.js ANTES de "export default router;"
 
 /**
  * @swagger
@@ -1151,7 +845,7 @@ router.post(
  *       scheme: bearer
  *       bearerFormat: JWT
  *       description: Token JWT obtenido del endpoint /api/auth/login
- * 
+ *
  *   schemas:
  *     Usuario:
  *       type: object
@@ -1222,7 +916,7 @@ router.post(
  *         activo: true
  *         fecha_creacion: "2024-01-15T10:30:00.000Z"
  *         fecha_actualizacion: "2024-12-20T15:45:00.000Z"
- * 
+ *
  *     UsuarioCrear:
  *       type: object
  *       description: Datos requeridos para crear un nuevo usuario
@@ -1296,7 +990,7 @@ router.post(
  *         apellido: "Pérez"
  *         rol: "cajero"
  *         activo: true
- * 
+ *
  *     UsuarioActualizar:
  *       type: object
  *       description: Datos para actualizar un usuario existente (todos opcionales, al menos uno requerido)
@@ -1338,7 +1032,7 @@ router.post(
  *           type: boolean
  *           example: true
  *       minProperties: 1
- * 
+ *
  *     ResetPassword:
  *       type: object
  *       description: Datos para resetear contraseña de un usuario (solo administradores)
@@ -1360,7 +1054,7 @@ router.post(
  *       example:
  *         password_nuevo: "NewPass1234"
  *         password_confirmacion: "NewPass1234"
- * 
+ *
  *     Pagination:
  *       type: object
  *       description: Información de paginación para listados
@@ -1389,7 +1083,7 @@ router.post(
  *         limit: 20
  *         total: 6
  *         pages: 1
- * 
+ *
  *     CacheInfo:
  *       type: object
  *       description: Información sobre caché de la respuesta
@@ -1406,7 +1100,7 @@ router.post(
  *       example:
  *         from_cache: true
  *         cache_timestamp: "2024-12-22T10:30:00.000Z"
- * 
+ *
  *     RateLimitError:
  *       type: object
  *       description: Error devuelto cuando se excede el límite de rate limiting
@@ -1426,7 +1120,7 @@ router.post(
  *         tipo:
  *           type: string
  *           description: Tipo específico de límite excedido
- *           enum: 
+ *           enum:
  *             - usuarios_write_limit
  *             - usuarios_critical_limit
  *             - usuarios_search_limit
@@ -1467,7 +1161,7 @@ router.post(
  *           razon: "Protección contra errores masivos y abuso del sistema"
  *           usuario: 1
  *         sugerencia: "Si necesitas hacer cambios masivos, contacta al administrador del sistema"
- * 
+ *
  *     RateLimitInfo:
  *       type: object
  *       description: |
@@ -1529,7 +1223,7 @@ router.post(
  *           limite: 30
  *           ventana: "5 minutos"
  *           descripcion: "Previene enumeración de cuentas y abuso de búsquedas costosas"
- * 
+ *
  *     SuccessResponse:
  *       type: object
  *       description: Estructura estándar de respuesta exitosa
@@ -1556,7 +1250,7 @@ router.post(
  *               example: "2024-12-22T10:30:00.000Z"
  *         cache_info:
  *           $ref: '#/components/schemas/CacheInfo'
- * 
+ *
  *     ErrorResponse:
  *       type: object
  *       description: Estructura estándar de respuesta de error
@@ -1592,7 +1286,7 @@ router.post(
  *           details:
  *             field: "username"
  *             constraint: "unique"
- * 
+ *
  *   responses:
  *     UnauthorizedError:
  *       description: Token de autenticación no proporcionado o inválido
@@ -1613,7 +1307,7 @@ router.post(
  *               summary: Token inválido
  *               value:
  *                 error: "Token inválido o expirado"
- * 
+ *
  *     ForbiddenError:
  *       description: Permisos insuficientes para realizar la operación
  *       content:
@@ -1638,7 +1332,7 @@ router.post(
  *             error: "No tienes permisos para realizar esta acción"
  *             requiredRoles: ["administrador", "dueño"]
  *             userRole: "cajero"
- * 
+ *
  *     NotFoundError:
  *       description: Recurso no encontrado
  *       content:
@@ -1651,7 +1345,7 @@ router.post(
  *               message: "Usuario no encontrado"
  *               code: 400
  *               timestamp: "2024-12-22T10:30:00.000Z"
- * 
+ *
  *     ValidationError:
  *       description: Errores de validación de datos
  *       content:
@@ -1682,14 +1376,14 @@ router.post(
  *                 message: "La contraseña debe tener al menos 8 caracteres"
  *               - field: "email"
  *                 message: "El email debe tener un formato válido"
- * 
+ *
  *     RateLimitExceeded:
  *       description: Límite de rate limiting excedido
  *       content:
  *         application/json:
  *           schema:
  *             $ref: '#/components/schemas/RateLimitError'
- * 
+ *
  *   parameters:
  *     usuarioId:
  *       in: path
@@ -1700,7 +1394,7 @@ router.post(
  *         minimum: 1
  *       description: ID único del usuario
  *       example: 1
- * 
+ *
  *     pageParam:
  *       in: query
  *       name: page
@@ -1710,7 +1404,7 @@ router.post(
  *         default: 1
  *       description: Número de página para paginación
  *       example: 1
- * 
+ *
  *     limitParam:
  *       in: query
  *       name: limit
@@ -1721,43 +1415,43 @@ router.post(
  *         default: 20
  *       description: Límite de resultados por página
  *       example: 20
- * 
+ *
  *   tags:
  *     - name: Usuarios
  *       description: |
  *         Gestión completa de usuarios del sistema de supermercado.
- *         
+ *
  *         ## Contexto del Negocio
  *         - Supermercado con 6 empleados
  *         - Roles: administrador, cajero, dueño, ayudante
  *         - Operaciones de usuarios infrecuentes (1-2/mes en promedio)
- *         
+ *
  *         ## Seguridad
  *         - Contraseñas hasheadas con bcrypt (nunca se almacenan en texto plano)
  *         - Validación de unicidad para username y email (case-insensitive)
  *         - Protección contra auto-modificación crítica (no puede desactivarse ni resetear su propia contraseña)
  *         - Invalidación automática de sesiones cuando se cambia contraseña
- *         
+ *
  *         ## Rate Limiting
- *         
+ *
  *         **Operaciones de Escritura (Crear/Actualizar):**
  *         - Límite: 20 operaciones cada 15 minutos por administrador
  *         - Justificación: Permite retrabajos por errores humanos, más estricto que otras entidades por seguridad
- *         
+ *
  *         **Operaciones Críticas (Toggle Estado / Reset Password):**
  *         - Límite: 10 operaciones cada 15 minutos
  *         - Justificación: Operaciones que afectan directamente el acceso al sistema, requieren auditoría estricta
- *         
+ *
  *         **Búsquedas:**
  *         - Límite: 30 búsquedas cada 5 minutos
  *         - Justificación: Búsquedas con LIKE son costosas en MySQL, previene enumeración de cuentas
- *         
+ *
  *         ## Caché
  *         - Usuarios individuales: 10 minutos (USUARIO_INDIVIDUAL)
  *         - Listas paginadas: 5 minutos (USUARIOS_PAGINADOS)
  *         - Búsquedas: 4 minutos (USUARIOS_SEARCH)
  *         - Invalidación automática en operaciones de escritura
- *         
+ *
  *         ## Permisos
  *         Todas las operaciones requieren autenticación (Bearer token).
  *         Solo usuarios con rol `administrador` o `dueño` pueden gestionar usuarios.

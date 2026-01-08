@@ -179,7 +179,6 @@ export {
   validateVentaId,
   validateVentasQuery,
   validateResumenQuery,
-  validateAnularVenta,
 
   // Middlewares compuestos (opcional para rutas complejas)
   validateCompleteVentaCreation,
