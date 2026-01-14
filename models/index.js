@@ -12,7 +12,7 @@
 // models/index.js - Versión Compatible con Sequelize-Auto (COMPLETA)
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url"; ;
 import { DataTypes } from "sequelize";
 import { sequelize } from "../config/database.js";
 
@@ -113,10 +113,13 @@ const loadSingleModel = async (file) => {
       return cachedModel;
     }
 
+    // 🔐 IMPORTANTE: convertir la ruta de archivo a file:// URL
+    const baseUrl = pathToFileURL(modelPath).href;
+
     const importUrl =
       process.env.NODE_ENV === "development"
-        ? `${modelPath}?t=${Date.now()}`
-        : modelPath;
+        ? `${baseUrl}?t=${Date.now()}`
+        : baseUrl;
 
     const moduleExport = await import(importUrl);
     let model = null;

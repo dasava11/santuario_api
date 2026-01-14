@@ -11,7 +11,7 @@ import { generalLimiter } from "./middleware/rateLimiters.js";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3011;
+const PORT = process.env.PORT || 3021;
 
 // =========================
 // 🌐 Middlewares globales
@@ -21,9 +21,9 @@ app.use(
     origin:
       process.env.NODE_ENV === "production"
         ? [
-            "https://santuario-front-8o49.vercel.app",
-            "https://santuario-desarrollo.vercel.app",
-          ]
+          "https://santuario-front-8o49.vercel.app",
+          "https://santuario-desarrollo.vercel.app",
+        ]
         : ["http://localhost:4200"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [

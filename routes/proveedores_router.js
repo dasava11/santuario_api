@@ -694,16 +694,16 @@ router.post(
  *     summary: Actualizar proveedor existente
  *     description: |
  *       Actualiza información de un proveedor.
- *       
+ *
  *       **Validaciones**:
  *       - Al menos 1 campo requerido para actualizar
  *       - Email único (si se modifica)
  *       - Validaciones de longitud en campos
- *       
+ *
  *       **Rate Limiting**:
  *       - Máximo 20 operaciones cada 10 minutos por usuario
  *       - Compartido con operaciones de creación
- *       
+ *
  *       **Permisos**: Solo administrador y dueño
  *     tags: [Proveedores]
  *     security:
@@ -846,30 +846,29 @@ router.post(
  *                 details:
  *                   proveedor_id: 999
  *                   sugerencia: "Verifica que el ID del proveedor sea correcto"
- *   409:
- *      description: Email duplicado
- *      content:
- *        application/json:
- *          schema:
- *           $ref: '#/components/schemas/ErrorResponse'
- *         example:
- *           success: false
- *           error:
- *             message: "Ya existe otro proveedor con este email"
- *             code: 409
- *             tipo: "duplicate_email"
- *             details:
- *               email: "contacto@otro.com"
- *               proveedor_id: 5
- *               sugerencia: "Verifica si otro proveedor ya está usando este email"
- *    
-*     401:
-*       $ref: '#/components/responses/UnauthorizedError'
-*     403:
-*       $ref: '#/components/responses/ForbiddenError'
-*     429:
-*       $ref: '#/components/schemas/RateLimitError'
-*/
+ *       409:
+ *         description: Email duplicado
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               success: false
+ *               error:
+ *                 message: "Ya existe otro proveedor con este email"
+ *                 code: 409
+ *                 tipo: "duplicate_email"
+ *                 details:
+ *                   email: "contacto@otro.com"
+ *                   proveedor_id: 5
+ *                   sugerencia: "Verifica si otro proveedor ya está usando este email"
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       403:
+ *         $ref: '#/components/responses/ForbiddenError'
+ *       429:
+ *         $ref: '#/components/schemas/RateLimitError'
+ */
 router.put(
   "/:id",
   proveedoresWriteLimiter,
