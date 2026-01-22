@@ -11,7 +11,7 @@ import { generalLimiter } from "./middleware/rateLimiters.js";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3021;
+const PORT = process.env.PORT || 3011;
 
 // =========================
 // 🌐 Middlewares globales
@@ -56,7 +56,7 @@ const swaggerOptions = {
       version: "2.0.0",
       description: "Documentación con Swagger para la API de El Santuario",
     },
-    servers: [{ url: `http://localhost:${PORT}/api` }],
+    servers: [{ url: `http://localhost:${process.env.PORT || 3021}/api` }],
     components: {
       securitySchemes: {
         bearerAuth: {
@@ -68,7 +68,7 @@ const swaggerOptions = {
       },
     },
   },
-  apis: ["/routes/**/*.js"], // aquí Swagger busca las anotaciones JSDoc
+  apis: ["./routes/**/*.js"], // aquí Swagger busca las anotaciones JSDoc. 
 };
 
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
