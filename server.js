@@ -63,6 +63,7 @@ const swaggerOptions = {
           type: "http",
           scheme: "bearer",
           bearerFormat: "JWT",
+          description: "Token JWT (opcional para pruebas Swagger, requerido en endpoints protegidos)",
         },
       },
     },
