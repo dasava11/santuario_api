@@ -68,7 +68,7 @@ const swaggerOptions = {
       },
     },
   },
-  apis: ["./routes/**/*.js"], // aquí Swagger busca las anotaciones JSDoc
+  apis: ["/routes/**/*.js"], // aquí Swagger busca las anotaciones JSDoc
 };
 
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
