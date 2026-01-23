@@ -27,6 +27,157 @@ const {
 } = db;
 
 // =====================================================
+// 🔍 FUNCIÓN AUXILIAR: BÚSQUEDA FLEXIBLE DE PRODUCTOS
+// =====================================================
+
+/**
+ * ✅ NUEVA: Busca producto por ID, código de barras o nombre
+ * 
+ * PRIORIDAD DE BÚSQUEDA:
+ * 1. producto_id (más específico y rápido)
+ * 2. codigo_barras (único, escaneo operativo)
+ * 3. nombre (búsqueda exacta case-insensitive)
+ * 
+ * CONTEXTO OPERATIVO:
+ * - Cajeros escanean código de barras (más común)
+ * - Ayudantes buscan por nombre si no hay código
+ * - Sistema usa IDs para referencias internas
+ * 
+ * @param {Object} identificador - Objeto con uno de: producto_id, codigo_barras, nombre
+ * @param {Transaction} transaction - Transacción de Sequelize (opcional)
+ * @returns {Promise<Object>} Producto encontrado
+ * @throws {Error} Si producto no encontrado o búsqueda ambigua
+ */
+const buscarProductoPorIdentificador = async (identificador, transaction = null) => {
+  const { producto_id, codigo_barras, nombre } = identificador;
+  
+  let producto = null;
+  let metodo_busqueda = null;
+
+  // ====================================================
+  // PRIORIDAD 1: Búsqueda por ID (más rápido)
+  // ====================================================
+  if (producto_id) {
+    producto = await productos.findOne({
+      where: {
+        id: producto_id,
+        activo: true,
+      },
+      transaction,
+    });
+    metodo_busqueda = "id";
+
+    if (!producto) {
+      throw new Error(`PRODUCTO_NOT_FOUND_BY_ID:${producto_id}`);
+    }
+  }
+  
+  // ====================================================
+  // PRIORIDAD 2: Búsqueda por código de barras
+  // ====================================================
+  else if (codigo_barras) {
+    // Búsqueda case-insensitive (MySQL es case-insensitive por defecto en strings)
+    producto = await productos.findOne({
+      where: {
+        codigo_barras: codigo_barras.trim(),
+        activo: true,
+      },
+      transaction,
+    });
+    metodo_busqueda = "codigo_barras";
+
+    if (!producto) {
+      throw new Error(`PRODUCTO_NOT_FOUND_BY_BARCODE:${codigo_barras}`);
+    }
+  }
+  
+  // ====================================================
+  // PRIORIDAD 3: Búsqueda por nombre exacto
+  // ====================================================
+  else if (nombre) {
+    // Búsqueda EXACTA case-insensitive usando LOWER()
+    const productosEncontrados = await productos.findAll({
+      where: sequelize.where(
+        sequelize.fn('LOWER', sequelize.col('nombre')),
+        sequelize.fn('LOWER', nombre.trim())
+      ),
+      attributes: ['id', 'nombre', 'codigo_barras', 'precio_compra', 'stock_actual'],
+      transaction,
+    });
+    
+    metodo_busqueda = "nombre";
+
+    // Validar resultados de búsqueda por nombre
+    if (productosEncontrados.length === 0) {
+      throw new Error(`PRODUCTO_NOT_FOUND_BY_NAME:${nombre}`);
+    }
+
+    // ⚠️ VALIDACIÓN CRÍTICA: Detectar nombres ambiguos
+    if (productosEncontrados.length > 1) {
+      // Filtrar solo activos
+      const productosActivos = productosEncontrados.filter(p => p.activo);
+      
+      if (productosActivos.length > 1) {
+        const nombresAmbiguos = productosActivos
+          .map(p => `${p.nombre} (ID: ${p.id}, Código: ${p.codigo_barras || 'N/A'})`)
+          .join(', ');
+        
+        console.warn(
+          `⚠️ BÚSQUEDA AMBIGUA POR NOMBRE:\n` +
+          `   Búsqueda: "${nombre}"\n` +
+          `   Productos encontrados: ${productosActivos.length}\n` +
+          `   Detalles: ${nombresAmbiguos}\n` +
+          `   Recomendación: Usar código de barras o ID específico`
+        );
+
+        throw new Error(
+          `PRODUCTO_AMBIGUOUS_NAME:${nombre}:${productosActivos.length}:${nombresAmbiguos}`
+        );
+      }
+      
+      // Si solo hay 1 activo, usarlo
+      producto = productosActivos[0];
+    } else {
+      // Solo 1 resultado encontrado
+      producto = productosEncontrados[0];
+      
+      // Validar que esté activo
+      if (!producto.activo) {
+        throw new Error(`PRODUCTO_INACTIVE_BY_NAME:${nombre}:${producto.id}`);
+      }
+    }
+  }
+  
+  // ====================================================
+  // VALIDACIÓN FINAL
+  // ====================================================
+  else {
+    // No debería llegar aquí si Joi está bien configurado
+    throw new Error(
+      "INVALID_PRODUCT_IDENTIFIER:No se proporcionó producto_id, codigo_barras ni nombre"
+    );
+  }
+
+  // ====================================================
+  // LOG DE AUDITORÍA (opcional, solo en desarrollo)
+  // ====================================================
+  if (process.env.NODE_ENV === "development") {
+    console.log(
+      `🔍 Producto encontrado por ${metodo_busqueda}:\n` +
+      `   ID: ${producto.id}\n` +
+      `   Nombre: ${producto.nombre}\n` +
+      `   Código: ${producto.codigo_barras || "N/A"}\n` +
+      `   Método: ${metodo_busqueda}`
+    );
+  }
+
+  return {
+    producto,
+    metodo_busqueda, // Útil para logs y debugging
+  };
+};
+
+// =====================================================
 // 🔍 OPERACIONES DE CONSULTA
 // =====================================================
 
@@ -305,10 +456,10 @@ const validarProveedor = async (proveedorId, transaction = null) => {
   return proveedor;
 };
 
-/**
+/* 
  * Valida que todos los productos existan y estén activos
  */
-const validarProductos = async (productosRecepcion, transaction = null) => {
+/* const validarProductos = async (productosRecepcion, transaction = null) => {
   const productosValidados = [];
   let total = 0;
 
@@ -338,7 +489,92 @@ const validarProductos = async (productosRecepcion, transaction = null) => {
   }
 
   return { productosValidados, total: parseFloat(total.toFixed(2)) };
+};  */
+
+* ✅ ACTUALIZADO: Valida productos usando búsqueda flexible
+ * Ahora acepta: producto_id OR codigo_barras OR nombre
+ */
+const validarProductos = async (productosRecepcion, transaction = null) => {
+  const productosValidados = [];
+  let total = 0;
+
+  // Validar productos duplicados (por cualquier identificador)
+  const identificadoresUsados = new Set();
+
+  for (const item of productosRecepcion) {
+    // ====================================================
+    // ✅ NUEVA LÓGICA: Búsqueda flexible de producto
+    // ====================================================
+    const { producto, metodo_busqueda } = await buscarProductoPorIdentificador(
+      item,
+      transaction
+    );
+
+    // ====================================================
+    // VALIDACIÓN: Detectar productos duplicados en la misma recepción
+    // ====================================================
+    const identificadorUnico = producto.id; // Usar ID como identificador único
+
+    if (identificadoresUsados.has(identificadorUnico)) {
+      // Determinar qué identificador usó el usuario
+      const identificadorOriginal = item.producto_id
+        ? `ID ${item.producto_id}`
+        : item.codigo_barras
+        ? `código ${item.codigo_barras}`
+        : `nombre "${item.nombre}"`;
+
+      throw new Error(
+        `PRODUCTO_DUPLICADO_EN_RECEPCION:${identificadorOriginal}:` +
+        `El producto "${producto.nombre}" (ID: ${producto.id}) ` +
+        `ya fue agregado a esta recepción`
+      );
+    }
+
+    identificadoresUsados.add(identificadorUnico);
+
+    // ====================================================
+    // CÁLCULO DE SUBTOTAL
+    // ====================================================
+    const subtotal = parseFloat(
+      (item.cantidad * item.precio_unitario).toFixed(2)
+    );
+    total += subtotal;
+
+    // ====================================================
+    // AGREGAR A LISTA DE VALIDADOS
+    // ====================================================
+    productosValidados.push({
+      ...item,
+      producto_id: producto.id, // ✅ IMPORTANTE: Normalizar a ID para BD
+      producto, // Objeto completo del producto
+      metodo_busqueda, // Para auditoría/logs
+      subtotal,
+    });
+
+    // ====================================================
+    // LOG DE AUDITORÍA (solo en desarrollo)
+    // ====================================================
+    if (process.env.NODE_ENV === "development") {
+      const identificadorUsado = item.producto_id
+        ? `ID: ${item.producto_id}`
+        : item.codigo_barras
+        ? `Código: ${item.codigo_barras}`
+        : `Nombre: "${item.nombre}"`;
+
+      console.log(
+        `✅ Producto validado:\n` +
+        `   Búsqueda por: ${identificadorUsado}\n` +
+        `   Encontrado: ${producto.nombre} (ID: ${producto.id})\n` +
+        `   Cantidad: ${item.cantidad}\n` +
+        `   Precio: $${item.precio_unitario}\n` +
+        `   Subtotal: $${subtotal}`
+      );
+    }
+  }
+
+  return { productosValidados, total: parseFloat(total.toFixed(2)) };
 };
+ 
 
 /**
  * Crea nueva recepción con validaciones de negocio
@@ -829,4 +1065,6 @@ export default {
   validarFacturaUnica,
   validarProveedor,
   validarProductos,
+
+  buscarProductoPorIdentificador,
 };

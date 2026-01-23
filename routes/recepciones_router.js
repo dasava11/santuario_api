@@ -251,6 +251,14 @@ router.get(
  *     description: |
  *       Registra recepción de productos de proveedor.
  *
+ *       **✅ BÚSQUEDA FLEXIBLE DE PRODUCTOS (NUEVO):**
+ *       Ahora puedes identificar productos de 3 formas diferentes:
+ *       1. **Por ID** (producto_id) - Método tradicional
+ *       2. **Por código de barras** (codigo_barras) - Escaneo directo ⭐ MÁS USADO
+ *       3. **Por nombre exacto** (nombre) - Búsqueda manual
+ *
+ *       **IMPORTANTE:** Cada producto debe usar **EXACTAMENTE UNO** de los identificadores.
+ *
  *       **Contexto de Negocio:**
  *       - Supermercado con ~100 proveedores
  *       - Recepciones típicas: 2-5 por día
@@ -271,6 +279,7 @@ router.get(
  *       - No productos duplicados en misma recepción
  *       - No recepciones >30 días de antigüedad
  *       - Proveedor debe estar activo
+ *       - Productos deben estar activos
  *     tags: [Recepciones]
  *     security:
  *       - bearerAuth: []
@@ -306,41 +315,181 @@ router.get(
  *               productos:
  *                 type: array
  *                 minItems: 1
+ *                 description: |
+ *                   Lista de productos recibidos.
+ *                   Cada producto requiere EXACTAMENTE UNO de: producto_id, codigo_barras o nombre
  *                 items:
  *                   type: object
  *                   required:
- *                     - producto_id
  *                     - cantidad
  *                     - precio_unitario
  *                   properties:
  *                     producto_id:
  *                       type: integer
  *                       minimum: 1
+ *                       description: ID del producto (OPCIÓN 1)
+ *                       example: 123
+ *                     codigo_barras:
+ *                       type: string
+ *                       minLength: 1
+ *                       maxLength: 50
+ *                       description: Código de barras del producto (OPCIÓN 2 - escaneo)
+ *                       example: "7501234567890"
+ *                     nombre:
+ *                       type: string
+ *                       minLength: 2
+ *                       maxLength: 200
+ *                       description: Nombre exacto del producto (OPCIÓN 3 - búsqueda manual)
+ *                       example: "Coca Cola 600ml"
  *                     cantidad:
  *                       type: number
  *                       minimum: 0.001
  *                       maximum: 99999999.999
+ *                       description: Cantidad recibida
  *                     precio_unitario:
  *                       type: number
  *                       minimum: 0.01
  *                       maximum: 99999999.99
- *           example:
- *             numero_factura: "FAC-2024-001"
- *             proveedor_id: 5
- *             fecha_recepcion: "2024-12-16"
- *             observaciones: "Entrega completa y en buen estado"
- *             productos:
- *               - producto_id: 123
- *                 cantidad: 50
- *                 precio_unitario: 2.50
- *               - producto_id: 456
- *                 cantidad: 30
- *                 precio_unitario: 5.00
+ *                       description: Precio unitario de compra
+ *           examples:
+ *             ejemplo_con_ids:
+ *               summary: Usando IDs (método tradicional)
+ *               value:
+ *                 numero_factura: "FAC-2024-001"
+ *                 proveedor_id: 5
+ *                 fecha_recepcion: "2024-12-16"
+ *                 observaciones: "Entrega completa y en buen estado"
+ *                 productos:
+ *                   - producto_id: 123
+ *                     cantidad: 50
+ *                     precio_unitario: 2.50
+ *                   - producto_id: 456
+ *                     cantidad: 30
+ *                     precio_unitario: 5.00
+ *             
+ *             ejemplo_con_codigos:
+ *               summary: ⭐ Usando códigos de barras (escaneo - MÁS USADO)
+ *               value:
+ *                 numero_factura: "FAC-2024-002"
+ *                 proveedor_id: 5
+ *                 fecha_recepcion: "2024-12-16"
+ *                 observaciones: "Productos escaneados directamente"
+ *                 productos:
+ *                   - codigo_barras: "7501234567890"
+ *                     cantidad: 50
+ *                     precio_unitario: 2.50
+ *                   - codigo_barras: "7501234567891"
+ *                     cantidad: 30
+ *                     precio_unitario: 5.00
+ *             
+ *             ejemplo_con_nombres:
+ *               summary: Usando nombres exactos (búsqueda manual)
+ *               value:
+ *                 numero_factura: "FAC-2024-003"
+ *                 proveedor_id: 5
+ *                 fecha_recepcion: "2024-12-16"
+ *                 observaciones: "Productos sin código de barras"
+ *                 productos:
+ *                   - nombre: "Coca Cola 600ml"
+ *                     cantidad: 50
+ *                     precio_unitario: 2.50
+ *                   - nombre: "Pan Blanco Grande"
+ *                     cantidad: 30
+ *                     precio_unitario: 1.50
+ *             
+ *             ejemplo_mixto:
+ *               summary: Combinando métodos de búsqueda
+ *               value:
+ *                 numero_factura: "FAC-2024-004"
+ *                 proveedor_id: 5
+ *                 fecha_recepcion: "2024-12-16"
+ *                 productos:
+ *                   - producto_id: 123
+ *                     cantidad: 50
+ *                     precio_unitario: 2.50
+ *                   - codigo_barras: "7501234567890"
+ *                     cantidad: 30
+ *                     precio_unitario: 5.00
+ *                   - nombre: "Pan Blanco Grande"
+ *                     cantidad: 20
+ *                     precio_unitario: 1.50
  *     responses:
  *       201:
  *         description: Recepción creada exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     mensaje:
+ *                       type: string
+ *                       example: "Recepción FAC-2024-001 creada exitosamente"
+ *                     recepcion:
+ *                       $ref: '#/components/schemas/Recepcion'
  *       400:
  *         description: Errores de validación o datos duplicados
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 error:
+ *                   type: string
+ *                   examples:
+ *                     - "Producto no encontrado"
+ *                     - "Búsqueda de producto ambigua"
+ *                     - "Producto duplicado en la recepción"
+ *                 details:
+ *                   type: object
+ *             examples:
+ *               producto_no_encontrado_id:
+ *                 summary: Producto no encontrado por ID
+ *                 value:
+ *                   success: false
+ *                   error: "Producto no encontrado"
+ *                   details:
+ *                     producto_id: 999
+ *                     razon: "No existe un producto activo con este ID"
+ *               
+ *               producto_no_encontrado_codigo:
+ *                 summary: Producto no encontrado por código de barras
+ *                 value:
+ *                   success: false
+ *                   error: "Producto no encontrado"
+ *                   details:
+ *                     codigo_barras: "7501234567890"
+ *                     razon: "No existe un producto activo con este código de barras"
+ *                     sugerencia: "Verifique que el código escaneado sea correcto"
+ *               
+ *               producto_nombre_ambiguo:
+ *                 summary: Búsqueda ambigua por nombre
+ *                 value:
+ *                   success: false
+ *                   error: "Búsqueda de producto ambigua: se encontraron múltiples productos con nombres similares"
+ *                   details:
+ *                     nombre_buscado: "Coca Cola"
+ *                     productos_encontrados: 3
+ *                     detalles: "Coca Cola 600ml (ID: 123), Coca Cola 1L (ID: 124), Coca Cola 2L (ID: 125)"
+ *                     solucion: "Use el código de barras o el ID específico del producto"
+ *               
+ *               producto_duplicado:
+ *                 summary: Producto duplicado en recepción
+ *                 value:
+ *                   success: false
+ *                   error: "Producto duplicado en la recepción"
+ *                   details:
+ *                     identificador: "código 7501234567890"
+ *                     detalle: "El producto \"Coca Cola 600ml\" (ID: 123) ya fue agregado a esta recepción"
+ *                     sugerencia: "Verifique que no haya productos repetidos en la lista"
  *       401:
  *         description: No autorizado
  *       403:

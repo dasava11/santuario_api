@@ -116,7 +116,9 @@ const crearRecepcion = asyncControllerWrapper(async (req, res) => {
       )
     );
   } catch (error) {
-    // Manejo de errores de negocio específicos
+    // ====================================================
+    // MANEJO DE ERRORES EXISTENTES
+    // ====================================================
     if (error.message === "PROVEEDOR_NOT_FOUND_OR_INACTIVE") {
       return res.status(400).json(
         buildBusinessErrorResponse("Proveedor no encontrado o inactivo", {
@@ -138,15 +140,95 @@ const crearRecepcion = asyncControllerWrapper(async (req, res) => {
       );
     }
 
-    if (error.message.startsWith("PRODUCTO_NOT_FOUND:")) {
+    // ====================================================
+    // ✅ NUEVOS MANEJADORES: Errores de búsqueda de productos
+    // ====================================================
+
+    // Producto no encontrado por ID
+    if (error.message.startsWith("PRODUCTO_NOT_FOUND_BY_ID:")) {
       const [, productoId] = error.message.split(":");
       return res.status(400).json(
-        buildBusinessErrorResponse("Producto no encontrado o inactivo", {
+        buildBusinessErrorResponse("Producto no encontrado", {
           producto_id: parseInt(productoId),
+          razon: "No existe un producto activo con este ID",
         })
       );
     }
 
+    // Producto no encontrado por código de barras
+    if (error.message.startsWith("PRODUCTO_NOT_FOUND_BY_BARCODE:")) {
+      const [, codigoBarras] = error.message.split(":");
+      return res.status(400).json(
+        buildBusinessErrorResponse("Producto no encontrado", {
+          codigo_barras: codigoBarras,
+          razon: "No existe un producto activo con este código de barras",
+          sugerencia: "Verifique que el código escaneado sea correcto",
+        })
+      );
+    }
+
+    // Producto no encontrado por nombre
+    if (error.message.startsWith("PRODUCTO_NOT_FOUND_BY_NAME:")) {
+      const [, nombre] = error.message.split(":");
+      return res.status(400).json(
+        buildBusinessErrorResponse("Producto no encontrado", {
+          nombre: nombre,
+          razon: "No existe un producto activo con este nombre exacto",
+          sugerencia: "Verifique la ortografía o use el código de barras",
+        })
+      );
+    }
+
+    // Producto con nombre ambiguo (múltiples coincidencias)
+    if (error.message.startsWith("PRODUCTO_AMBIGUOUS_NAME:")) {
+      const [, nombre, cantidad, detalles] = error.message.split(":");
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          "Búsqueda de producto ambigua: se encontraron múltiples productos con nombres similares",
+          {
+            nombre_buscado: nombre,
+            productos_encontrados: parseInt(cantidad),
+            detalles: detalles,
+            solucion: "Use el código de barras o el ID específico del producto",
+          }
+        )
+      );
+    }
+
+    // Producto inactivo encontrado por nombre
+    if (error.message.startsWith("PRODUCTO_INACTIVE_BY_NAME:")) {
+      const [, nombre, productoId] = error.message.split(":");
+      return res.status(400).json(
+        buildBusinessErrorResponse("Producto encontrado pero inactivo", {
+          nombre: nombre,
+          producto_id: parseInt(productoId),
+          razon: "El producto existe pero está desactivado en el sistema",
+          sugerencia: "Contacte al administrador para reactivar el producto",
+        })
+      );
+    }
+
+    // Producto duplicado en la misma recepción
+    if (error.message.startsWith("PRODUCTO_DUPLICADO_EN_RECEPCION:")) {
+      const partes = error.message.split(":");
+      const identificadorOriginal = partes[1];
+      const mensajeCompleto = partes.slice(2).join(":");
+
+      return res.status(400).json(
+        buildBusinessErrorResponse(
+          "Producto duplicado en la recepción",
+          {
+            identificador: identificadorOriginal,
+            detalle: mensajeCompleto,
+            sugerencia: "Verifique que no haya productos repetidos en la lista",
+          }
+        )
+      );
+    }
+
+    // ====================================================
+    // MANEJO DE ERRORES DE SEQUELIZE
+    // ====================================================
     if (error.name?.startsWith("Sequelize")) {
       const errorResponse = handleSequelizeError(
         error,
@@ -155,7 +237,8 @@ const crearRecepcion = asyncControllerWrapper(async (req, res) => {
       return res.status(errorResponse.error.code).json(errorResponse);
     }
 
-    throw error; // Re-throw para manejo genérico
+    // Re-throw para manejo genérico
+    throw error;
   }
 }, "creación de recepción");
 

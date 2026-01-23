@@ -6,9 +6,77 @@ import Joi from "joi";
 // =====================================================
 
 /**
+ * ✅ NUEVO: Schema para identificador flexible de producto
+ * Permite buscar por: producto_id OR codigo_barras OR nombre
+ * 
+ * CONTEXTO OPERATIVO:
+ * - Cajeros escanean código de barras (más común)
+ * - Ayudantes pueden buscar por nombre
+ * - Sistema administrativo usa IDs
+ */
+const productoIdentificador = Joi.object({
+  // OPCIÓN 1: Por ID (método tradicional)
+  producto_id: Joi.number().integer().positive().messages({
+    "number.base": "El ID del producto debe ser un número",
+    "number.integer": "El ID del producto debe ser un número entero",
+    "number.positive": "El ID del producto debe ser un número positivo",
+  }),
+
+  // OPCIÓN 2: Por código de barras (NUEVO - más usado operativamente)
+  codigo_barras: Joi.string().trim().min(1).max(50).messages({
+    "string.base": "El código de barras debe ser una cadena de texto",
+    "string.empty": "El código de barras no puede estar vacío",
+    "string.min": "El código de barras debe tener al menos 1 carácter",
+    "string.max": "El código de barras no puede exceder los 50 caracteres",
+  }),
+
+  // OPCIÓN 3: Por nombre exacto (NUEVO - búsqueda manual)
+  nombre: Joi.string().trim().min(2).max(200).messages({
+    "string.base": "El nombre del producto debe ser una cadena de texto",
+    "string.empty": "El nombre del producto no puede estar vacío",
+    "string.min": "El nombre del producto debe tener al menos 2 caracteres",
+    "string.max": "El nombre del producto no puede exceder los 200 caracteres",
+  }),
+
+  // Campos de cantidad y precio (comunes a todas las opciones)
+  cantidad: Joi.number()
+    .positive()
+    .precision(3)
+    .max(99999999.999)
+    .required()
+    .messages({
+      "number.base": "La cantidad debe ser un número",
+      "number.positive": "La cantidad debe ser un número positivo",
+      "number.precision": "La cantidad no puede tener más de 3 decimales",
+      "number.max": "La cantidad excede el límite máximo permitido",
+      "any.required": "La cantidad es obligatoria",
+    }),
+
+  precio_unitario: Joi.number()
+    .positive()
+    .precision(2)
+    .max(99999999.99)
+    .required()
+    .messages({
+      "number.base": "El precio unitario debe ser un número",
+      "number.positive": "El precio unitario debe ser un número positivo",
+      "number.precision": "El precio unitario no puede tener más de 2 decimales",
+      "number.max": "El precio unitario excede el límite máximo permitido",
+      "any.required": "El precio unitario es obligatorio",
+    }),
+})
+  // ✅ VALIDACIÓN CRÍTICA: Exactamente UNO de los identificadores debe estar presente
+  .xor("producto_id", "codigo_barras", "nombre")
+  .messages({
+    "object.missing":
+      "Debe proporcionar exactamente uno de: producto_id, codigo_barras o nombre",
+    "object.xor":
+      "Solo puede proporcionar uno de: producto_id, codigo_barras o nombre (no varios a la vez)",
+  });
+
+/**
  * Esquema para crear recepción
- * Campos requeridos: numero_factura, proveedor_id, fecha_recepcion, productos
- * Campos opcionales: observaciones
+ * ✅ ACTUALIZADO: Usa nuevo schema de identificador flexible
  */
 export const createRecepcion = Joi.object({
   numero_factura: Joi.string().trim().min(1).max(100).required().messages({
@@ -28,8 +96,7 @@ export const createRecepcion = Joi.object({
 
   fecha_recepcion: Joi.date().iso().max("now").required().messages({
     "date.base": "La fecha de recepción debe ser una fecha válida",
-    "date.format":
-      "La fecha de recepción debe estar en formato ISO (YYYY-MM-DD)",
+    "date.format": "La fecha de recepción debe estar en formato ISO (YYYY-MM-DD)",
     "date.max": "La fecha de recepción no puede ser posterior a hoy",
     "any.required": "La fecha de recepción es obligatoria",
   }),
@@ -44,45 +111,9 @@ export const createRecepcion = Joi.object({
       "string.max": "Las observaciones no pueden exceder los 1000 caracteres",
     }),
 
+  // ✅ ACTUALIZADO: Usa el nuevo schema de identificador flexible
   productos: Joi.array()
-    .items(
-      Joi.object({
-        producto_id: Joi.number().integer().positive().required().messages({
-          "number.base": "El ID del producto debe ser un número",
-          "number.integer": "El ID del producto debe ser un número entero",
-          "number.positive": "El ID del producto debe ser un número positivo",
-          "any.required": "El ID del producto es obligatorio",
-        }),
-
-        cantidad: Joi.number()
-          .positive()
-          .precision(3)
-          .max(99999999.999)
-          .required()
-          .messages({
-            "number.base": "La cantidad debe ser un número",
-            "number.positive": "La cantidad debe ser un número positivo",
-            "number.precision": "La cantidad no puede tener más de 3 decimales",
-            "number.max": "La cantidad excede el límite máximo permitido",
-            "any.required": "La cantidad es obligatoria",
-          }),
-
-        precio_unitario: Joi.number()
-          .positive()
-          .precision(2)
-          .max(99999999.99)
-          .required()
-          .messages({
-            "number.base": "El precio unitario debe ser un número",
-            "number.positive": "El precio unitario debe ser un número positivo",
-            "number.precision":
-              "El precio unitario no puede tener más de 2 decimales",
-            "number.max":
-              "El precio unitario excede el límite máximo permitido",
-            "any.required": "El precio unitario es obligatorio",
-          }),
-      })
-    )
+    .items(productoIdentificador)
     .min(1)
     .required()
     .messages({
@@ -91,6 +122,7 @@ export const createRecepcion = Joi.object({
       "any.required": "Los productos son obligatorios",
     }),
 });
+
 
 /**
  * Esquema para actualizar recepción
