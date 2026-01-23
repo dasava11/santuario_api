@@ -491,7 +491,7 @@ const validarProveedor = async (proveedorId, transaction = null) => {
   return { productosValidados, total: parseFloat(total.toFixed(2)) };
 };  */
 
-* ✅ ACTUALIZADO: Valida productos usando búsqueda flexible
+/* ✅ ACTUALIZADO: Valida productos usando búsqueda flexible
  * Ahora acepta: producto_id OR codigo_barras OR nombre
  */
 const validarProductos = async (productosRecepcion, transaction = null) => {
