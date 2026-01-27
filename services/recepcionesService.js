@@ -50,7 +50,7 @@ const {
  */
 const buscarProductoPorIdentificador = async (identificador, transaction = null) => {
   const { producto_id, codigo_barras, nombre } = identificador;
-  
+
   let producto = null;
   let metodo_busqueda = null;
 
@@ -71,7 +71,7 @@ const buscarProductoPorIdentificador = async (identificador, transaction = null)
       throw new Error(`PRODUCTO_NOT_FOUND_BY_ID:${producto_id}`);
     }
   }
-  
+
   // ====================================================
   // PRIORIDAD 2: Búsqueda por código de barras
   // ====================================================
@@ -90,7 +90,7 @@ const buscarProductoPorIdentificador = async (identificador, transaction = null)
       throw new Error(`PRODUCTO_NOT_FOUND_BY_BARCODE:${codigo_barras}`);
     }
   }
-  
+
   // ====================================================
   // PRIORIDAD 3: Búsqueda por nombre exacto
   // ====================================================
@@ -101,10 +101,10 @@ const buscarProductoPorIdentificador = async (identificador, transaction = null)
         sequelize.fn('LOWER', sequelize.col('nombre')),
         sequelize.fn('LOWER', nombre.trim())
       ),
-      attributes: ['id', 'nombre', 'codigo_barras', 'precio_compra', 'stock_actual'],
+      attributes: ['id', 'nombre', 'codigo_barras', 'precio_compra', 'stock_actual', 'activo'],
       transaction,
     });
-    
+
     metodo_busqueda = "nombre";
 
     // Validar resultados de búsqueda por nombre
@@ -116,12 +116,12 @@ const buscarProductoPorIdentificador = async (identificador, transaction = null)
     if (productosEncontrados.length > 1) {
       // Filtrar solo activos
       const productosActivos = productosEncontrados.filter(p => p.activo);
-      
+
       if (productosActivos.length > 1) {
         const nombresAmbiguos = productosActivos
           .map(p => `${p.nombre} (ID: ${p.id}, Código: ${p.codigo_barras || 'N/A'})`)
           .join(', ');
-        
+
         console.warn(
           `⚠️ BÚSQUEDA AMBIGUA POR NOMBRE:\n` +
           `   Búsqueda: "${nombre}"\n` +
@@ -134,20 +134,20 @@ const buscarProductoPorIdentificador = async (identificador, transaction = null)
           `PRODUCTO_AMBIGUOUS_NAME:${nombre}:${productosActivos.length}:${nombresAmbiguos}`
         );
       }
-      
+
       // Si solo hay 1 activo, usarlo
       producto = productosActivos[0];
     } else {
       // Solo 1 resultado encontrado
       producto = productosEncontrados[0];
-      
+
       // Validar que esté activo
       if (!producto.activo) {
         throw new Error(`PRODUCTO_INACTIVE_BY_NAME:${nombre}:${producto.id}`);
       }
     }
   }
-  
+
   // ====================================================
   // VALIDACIÓN FINAL
   // ====================================================
@@ -520,8 +520,8 @@ const validarProductos = async (productosRecepcion, transaction = null) => {
       const identificadorOriginal = item.producto_id
         ? `ID ${item.producto_id}`
         : item.codigo_barras
-        ? `código ${item.codigo_barras}`
-        : `nombre "${item.nombre}"`;
+          ? `código ${item.codigo_barras}`
+          : `nombre "${item.nombre}"`;
 
       throw new Error(
         `PRODUCTO_DUPLICADO_EN_RECEPCION:${identificadorOriginal}:` +
@@ -558,8 +558,8 @@ const validarProductos = async (productosRecepcion, transaction = null) => {
       const identificadorUsado = item.producto_id
         ? `ID: ${item.producto_id}`
         : item.codigo_barras
-        ? `Código: ${item.codigo_barras}`
-        : `Nombre: "${item.nombre}"`;
+          ? `Código: ${item.codigo_barras}`
+          : `Nombre: "${item.nombre}"`;
 
       console.log(
         `✅ Producto validado:\n` +
@@ -574,7 +574,7 @@ const validarProductos = async (productosRecepcion, transaction = null) => {
 
   return { productosValidados, total: parseFloat(total.toFixed(2)) };
 };
- 
+
 
 /**
  * Crea nueva recepción con validaciones de negocio
@@ -603,12 +603,12 @@ const crearRecepcion = async (datosRecepcion, usuarioId) => {
 
       console.warn(
         `⚠️ RECEPCIÓN CON FECHA ANTIGUA:\n` +
-          `   Fecha recepción: ${fecha_recepcion}\n` +
-          `   Antigüedad: ${diasAntiguedad} días\n` +
-          `   Proveedor ID: ${proveedor_id}\n` +
-          `   Factura: ${numero_factura}\n` +
-          `   Usuario: ${usuarioId}\n` +
-          `   Acción: Permitir creación (validación en middleware ya pasó)`
+        `   Fecha recepción: ${fecha_recepcion}\n` +
+        `   Antigüedad: ${diasAntiguedad} días\n` +
+        `   Proveedor ID: ${proveedor_id}\n` +
+        `   Factura: ${numero_factura}\n` +
+        `   Usuario: ${usuarioId}\n` +
+        `   Acción: Permitir creación (validación en middleware ya pasó)`
       );
     }
 
@@ -665,14 +665,14 @@ const crearRecepcion = async (datosRecepcion, usuarioId) => {
     // ✅ NUEVO: Log de auditoría mejorado
     console.log(
       `✅ RECEPCIÓN CREADA:\n` +
-        `   ID: ${nuevaRecepcion.id}\n` +
-        `   Factura: ${numero_factura}\n` +
-        `   Proveedor: ${proveedor_id}\n` +
-        `   Fecha: ${fecha_recepcion}\n` +
-        `   Total productos: ${productosValidados.length}\n` +
-        `   Valor total: $${total}\n` +
-        `   Usuario: ${usuarioId}\n` +
-        `   Timestamp: ${new Date().toISOString()}`
+      `   ID: ${nuevaRecepcion.id}\n` +
+      `   Factura: ${numero_factura}\n` +
+      `   Proveedor: ${proveedor_id}\n` +
+      `   Fecha: ${fecha_recepcion}\n` +
+      `   Total productos: ${productosValidados.length}\n` +
+      `   Valor total: $${total}\n` +
+      `   Usuario: ${usuarioId}\n` +
+      `   Timestamp: ${new Date().toISOString()}`
     );
 
     return nuevaRecepcion;
@@ -782,14 +782,14 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
       if (!producto.activo) {
         console.warn(
           `⚠️ PRODUCTO INACTIVO SIENDO PROCESADO EN RECEPCIÓN:\n` +
-            `   Producto: ${producto.nombre} (ID: ${producto.id})\n` +
-            `   Recepción: ${recepcion.numero_factura}\n` +
-            `   Stock actual: ${stockAnterior}\n` +
-            `   Cantidad a recibir: ${cantidad}\n` +
-            `   Razón: Mercancía física ya recibida, producto desactivado después\n` +
-            `   Acción: Procesar de todos modos y agregar advertencia\n` +
-            `   Usuario: ${usuarioId}\n` +
-            `   Timestamp: ${new Date().toISOString()}`
+          `   Producto: ${producto.nombre} (ID: ${producto.id})\n` +
+          `   Recepción: ${recepcion.numero_factura}\n` +
+          `   Stock actual: ${stockAnterior}\n` +
+          `   Cantidad a recibir: ${cantidad}\n` +
+          `   Razón: Mercancía física ya recibida, producto desactivado después\n` +
+          `   Acción: Procesar de todos modos y agregar advertencia\n` +
+          `   Usuario: ${usuarioId}\n` +
+          `   Timestamp: ${new Date().toISOString()}`
         );
 
         // Agregar a lista de advertencias
@@ -862,10 +862,10 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
     if (productosInactivos.length > 0) {
       console.warn(
         `⚠️ RECEPCIÓN PROCESADA CON PRODUCTOS INACTIVOS:\n` +
-          `   Recepción: ${recepcion.numero_factura} (ID: ${id})\n` +
-          `   Total productos inactivos: ${productosInactivos.length}\n` +
-          `   Detalles: ${JSON.stringify(productosInactivos, null, 2)}\n` +
-          `   Recomendación: Revisar estado de productos y considerar reactivarlos si hay stock`
+        `   Recepción: ${recepcion.numero_factura} (ID: ${id})\n` +
+        `   Total productos inactivos: ${productosInactivos.length}\n` +
+        `   Detalles: ${JSON.stringify(productosInactivos, null, 2)}\n` +
+        `   Recomendación: Revisar estado de productos y considerar reactivarlos si hay stock`
       );
     }
 
@@ -875,9 +875,9 @@ const procesarRecepcion = async (id, usuarioId, opciones = {}) => {
       advertencias:
         productosInactivos.length > 0
           ? {
-              productos_inactivos: productosInactivos,
-              mensaje: `Se procesaron ${productosInactivos.length} producto(s) inactivo(s). Revise el inventario.`,
-            }
+            productos_inactivos: productosInactivos,
+            mensaje: `Se procesaron ${productosInactivos.length} producto(s) inactivo(s). Revise el inventario.`,
+          }
           : null,
     };
   } catch (error) {

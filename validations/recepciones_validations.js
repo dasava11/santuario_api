@@ -144,27 +144,46 @@ const validateBusinessDateRules = (req, res, next) => {
  */
 const validateProductosBusinessRules = (req, res, next) => {
   const { productos } = req.body;
-
-  if (!productos || !Array.isArray(productos)) {
-    return next(); // Ya validado por Joi
+  
+    if (!productos || !Array.isArray(productos)) {
+    return next();
   }
 
-  // Regla de negocio: No permitir productos duplicados
-  const productosIds = productos.map((p) => p.producto_id);
-  const productosDuplicados = productosIds.filter(
-    (id, index) => productosIds.indexOf(id) !== index
-  );
+  // ✅ Construir un Set de identificadores únicos
+  const identificadoresVistos = new Set();
+  const duplicados = [];
 
-  if (productosDuplicados.length > 0) {
+  productos.forEach((producto, index) => {
+    // Extraer el identificador que se esté usando
+    let identificador;
+    
+    if (producto.producto_id) {
+      identificador = `ID:${producto.producto_id}`;
+    } else if (producto.codigo_barras) {
+      identificador = `CB:${producto.codigo_barras}`;
+    } else if (producto.nombre) {
+      identificador = `NOM:${producto.nombre}`;
+    } else {
+      // Esto no debería pasar porque Joi ya lo valida, pero por seguridad
+      identificador = `INDEX:${index}`;
+    }
+
+    // Verificar si ya lo vimos
+    if (identificadoresVistos.has(identificador)) {
+      duplicados.push(identificador);
+    } else {
+      identificadoresVistos.add(identificador);
+    }
+  });
+
+  if (duplicados.length > 0) {
     return res.status(400).json({
       success: false,
       error: "Regla de negocio violada",
       details: [
         {
           field: "productos",
-          message: `Productos duplicados encontrados: ${productosDuplicados.join(
-            ", "
-          )}`,
+          message: `Productos duplicados encontrados: ${duplicados.join(", ")}`,
         },
       ],
     });
