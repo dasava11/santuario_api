@@ -5,10 +5,88 @@ import Joi from "joi";
 // 📋 DEFINICIONES DE ESQUEMAS PARA VENTAS
 // =====================================================
 
+// =====================================================
+// 🆕 Schema para identificador flexible de producto
+// =====================================================
+
+/**
+ * ✅ NUEVO: Schema para identificador flexible de producto
+ * Permite buscar por: producto_id OR codigo_barras OR nombre
+ * 
+ * CONTEXTO OPERATIVO:
+ * - Cajeros escanean código de barras (más común)
+ * - Ayudantes pueden buscar por nombre
+ * - Sistema administrativo usa IDs
+ * 
+ * 🔄 IGUAL QUE EN RECEPCIONES para mantener consistencia
+ */
+const productoIdentificadorVenta = Joi.object({
+  // OPCIÓN 1: Por ID (método tradicional/administrativo)
+  producto_id: Joi.number().integer().positive().messages({
+    "number.base": "El ID del producto debe ser un número",
+    "number.integer": "El ID del producto debe ser un número entero",
+    "number.positive": "El ID del producto debe ser un número positivo",
+  }),
+
+  // OPCIÓN 2: Por código de barras (NUEVO - más usado en caja)
+  codigo_barras: Joi.string().trim().min(1).max(50).messages({
+    "string.base": "El código de barras debe ser una cadena de texto",
+    "string.empty": "El código de barras no puede estar vacío",
+    "string.min": "El código de barras debe tener al menos 1 carácter",
+    "string.max": "El código de barras no puede exceder los 50 caracteres",
+  }),
+
+  // OPCIÓN 3: Por nombre exacto (NUEVO - búsqueda manual)
+  nombre: Joi.string().trim().min(2).max(200).messages({
+    "string.base": "El nombre del producto debe ser una cadena de texto",
+    "string.empty": "El nombre del producto no puede estar vacío",
+    "string.min": "El nombre del producto debe tener al menos 2 caracteres",
+    "string.max": "El nombre del producto no puede exceder los 200 caracteres",
+  }),
+
+  // Campos comunes a todas las opciones
+  cantidad: Joi.number()
+    .positive()
+    .precision(3)
+    .max(99999999.999)
+    .required()
+    .messages({
+      "number.base": "La cantidad debe ser un número",
+      "number.positive": "La cantidad debe ser un número positivo",
+      "number.precision": "La cantidad no puede tener más de 3 decimales",
+      "number.max": "La cantidad excede el límite máximo permitido",
+      "any.required": "La cantidad es obligatoria",
+    }),
+
+  precio_unitario: Joi.number()
+    .positive()
+    .precision(2)
+    .max(99999999.99)
+    .optional()
+    .messages({
+      "number.base": "El precio unitario debe ser un número",
+      "number.positive": "El precio unitario debe ser un número positivo",
+      "number.precision": "El precio unitario no puede tener más de 2 decimales",
+      "number.max": "El precio unitario excede el límite máximo permitido",
+    }),
+})
+  // ✅ VALIDACIÓN CRÍTICA: Exactamente UNO de los identificadores debe estar presente
+  .xor("producto_id", "codigo_barras", "nombre")
+  .messages({
+    "object.missing":
+      "Debe proporcionar exactamente uno de: producto_id, codigo_barras o nombre",
+    "object.xor":
+      "Solo puede proporcionar uno de: producto_id, codigo_barras o nombre (no varios a la vez)",
+  });
+
+
+// =====================================================
+// 🔄 SCHEMA ACTUALIZADO: createVenta
+// =====================================================
+
 /**
  * Esquema para crear venta
- * Campos requeridos: productos (array con producto_id y cantidad)
- * Campos opcionales: metodo_pago, precio_unitario por producto
+ * ✅ ACTUALIZADO: Usa nuevo schema de identificador flexible
  */
 export const createVenta = Joi.object({
   metodo_pago: Joi.string()
@@ -19,44 +97,9 @@ export const createVenta = Joi.object({
         'El método de pago debe ser "efectivo", "tarjeta" o "transferencia"',
     }),
 
+  // ✅ CAMBIO PRINCIPAL: Usar productoIdentificadorVenta en lugar de objeto inline
   productos: Joi.array()
-    .items(
-      Joi.object({
-        producto_id: Joi.number().integer().positive().required().messages({
-          "number.base": "El ID del producto debe ser un número",
-          "number.integer": "El ID del producto debe ser un número entero",
-          "number.positive": "El ID del producto debe ser un número positivo",
-          "any.required": "El ID del producto es obligatorio",
-        }),
-
-        cantidad: Joi.number()
-          .positive()
-          .precision(3)
-          .max(99999999.999)
-          .required()
-          .messages({
-            "number.base": "La cantidad debe ser un número",
-            "number.positive": "La cantidad debe ser un número positivo",
-            "number.precision": "La cantidad no puede tener más de 3 decimales",
-            "number.max": "La cantidad excede el límite máximo permitido",
-            "any.required": "La cantidad es obligatoria",
-          }),
-
-        precio_unitario: Joi.number()
-          .positive()
-          .precision(2)
-          .max(99999999.99)
-          .optional()
-          .messages({
-            "number.base": "El precio unitario debe ser un número",
-            "number.positive": "El precio unitario debe ser un número positivo",
-            "number.precision":
-              "El precio unitario no puede tener más de 2 decimales",
-            "number.max":
-              "El precio unitario excede el límite máximo permitido",
-          }),
-      })
-    )
+    .items(productoIdentificadorVenta)
     .min(1)
     .required()
     .messages({
@@ -188,13 +231,9 @@ export const ventasSchemas = {
 };
 
 // =====================================================
-// 📄 METADATA DE SCHEMAS (PARA DOCUMENTACIÓN)
+// 🆕 METADATA ACTUALIZADA
 // =====================================================
 
-/**
- * Información sobre los schemas disponibles
- * Útil para generación automática de documentación
- */
 export const schemasInfo = {
   createVenta: {
     description: "Validación para crear nueva venta",
@@ -206,6 +245,8 @@ export const schemasInfo = {
       "Cantidad máxima de 3 decimales",
       "Precio máximo de 2 decimales",
       "Si no se proporciona precio_unitario, se usa precio_venta del producto",
+      "✅ NUEVO: Soporta identificación por producto_id, codigo_barras o nombre",
+      "✅ NUEVO: Solo UNO de los identificadores debe estar presente (XOR)",
     ],
   },
 

@@ -166,26 +166,71 @@ const obtenerVentaPorId = async (id) => {
 // OPERACIONES DE ESCRITURA
 // =====================================================
 
+// =====================================================
+// 🔄 FUNCIÓN REFACTORIZADA: validarProductosYStock
+// =====================================================
+
 /**
- * Valida productos y calcula stock disponible
+ * ✅ REFACTORIZADO: Valida productos y calcula stock disponible
+ * Ahora busca productos por CUALQUIER identificador:
+ * - producto_id (tradicional)
+ * - codigo_barras (escaneo en caja) ← NUEVO
+ * - nombre (búsqueda manual) ← NUEVO
+ * 
+ * 🎯 CONTEXTO: Caja registradora real donde se escanean códigos de barras
+ * 
+ * @param {Array} productosVenta - Array de productos con identificador flexible
+ * @param {Transaction} transaction - Transacción de Sequelize
+ * @returns {Promise<Object>} { productosValidados, total }
+ * @throws {Error} PRODUCTO_NOT_FOUND:{identificador} si no se encuentra
+ * @throws {Error} STOCK_INSUFICIENTE:{nombre}:{stock}:{requerido} si no hay stock
  */
 const validarProductosYStock = async (productosVenta, transaction) => {
   const productosValidados = [];
   let total = 0;
 
   for (const item of productosVenta) {
+    // ✅ NUEVO: Construir cláusula WHERE dinámica según el identificador usado
+    let whereClause = { activo: true };
+    let identificadorTipo = "desconocido";
+    let identificadorValor = null;
+
+    if (item.producto_id) {
+      // Opción 1: Búsqueda por ID (tradicional)
+      whereClause.id = item.producto_id;
+      identificadorTipo = "ID";
+      identificadorValor = item.producto_id;
+    } else if (item.codigo_barras) {
+      // Opción 2: Búsqueda por código de barras (NUEVO - más común en caja)
+      whereClause.codigo_barras = item.codigo_barras;
+      identificadorTipo = "código de barras";
+      identificadorValor = item.codigo_barras;
+    } else if (item.nombre) {
+      // Opción 3: Búsqueda por nombre exacto (NUEVO - búsqueda manual)
+      whereClause.nombre = item.nombre;
+      identificadorTipo = "nombre";
+      identificadorValor = item.nombre;
+    } else {
+      // Esto no debería pasar porque Joi ya lo valida, pero por seguridad
+      throw new Error(
+        `PRODUCTO_IDENTIFICADOR_INVALIDO:No se proporcionó producto_id, codigo_barras ni nombre`
+      );
+    }
+
+    // ✅ BUSCAR PRODUCTO con cláusula dinámica
     const producto = await productos.findOne({
-      where: {
-        id: item.producto_id,
-        activo: true,
-      },
+      where: whereClause,
       transaction,
     });
 
+    // ✅ ERROR MEJORADO: Incluir el tipo de identificador usado
     if (!producto) {
-      throw new Error(`PRODUCTO_NOT_FOUND:${item.producto_id}`);
+      throw new Error(
+        `PRODUCTO_NOT_FOUND:${identificadorTipo}:${identificadorValor}`
+      );
     }
 
+    // ✅ VALIDACIÓN DE STOCK (sin cambios)
     const stockActual = parseFloat(producto.stock_actual) || 0;
     const cantidadRequerida = parseFloat(item.cantidad);
 
@@ -195,6 +240,7 @@ const validarProductosYStock = async (productosVenta, transaction) => {
       );
     }
 
+    // ✅ CÁLCULO DE PRECIOS (sin cambios)
     const precioUnitario = parseFloat(
       item.precio_unitario || producto.precio_venta
     );
@@ -202,6 +248,15 @@ const validarProductosYStock = async (productosVenta, transaction) => {
       (cantidadRequerida * precioUnitario).toFixed(2)
     );
     total += subtotal;
+
+    // ✅ NUEVO: Log de auditoría para debugging
+    console.log(
+      `✅ Producto validado:\n` +
+      `   Búsqueda: ${identificadorTipo} = ${identificadorValor}\n` +
+      `   Encontrado: ${producto.nombre} (ID: ${producto.id})\n` +
+      `   Stock: ${stockActual} | Requerido: ${cantidadRequerida}\n` +
+      `   Precio: $${precioUnitario} | Subtotal: $${subtotal}`
+    );
 
     productosValidados.push({
       ...item,
@@ -214,6 +269,37 @@ const validarProductosYStock = async (productosVenta, transaction) => {
 
   return { productosValidados, total: parseFloat(total.toFixed(2)) };
 };
+
+// =====================================================
+// ℹ️ NOTAS DE USO
+// =====================================================
+
+/*
+EJEMPLOS DE USO:
+
+// Antes (solo producto_id):
+const productos = [
+  { producto_id: 1, cantidad: 5 },
+  { producto_id: 2, cantidad: 3, precio_unitario: 10.50 }
+];
+
+// Ahora (identificador flexible):
+const productos = [
+  // Opción 1: Por ID (tradicional)
+  { producto_id: 1, cantidad: 5 },
+  
+  // Opción 2: Por código de barras (escaneo)
+  { codigo_barras: "7700304521005", cantidad: 3 },
+  
+  // Opción 3: Por nombre (búsqueda manual)
+  { nombre: "Coca Cola 1.5L", cantidad: 2 },
+  
+  // Con precio personalizado
+  { codigo_barras: "7702004025753", cantidad: 10, precio_unitario: 2.50 }
+];
+
+// IMPORTANTE: Solo UNO de los identificadores debe estar presente (validado por Joi)
+*/
 
 // =====================================================
 // GENERACIÓN SEGURA DE NÚMERO DE VENTA
@@ -266,8 +352,7 @@ const generarNumeroVentaSeguro = async (transaction) => {
       if (!existe) {
         // Log de auditoría
         console.log(
-          `✅ Número de venta generado: ${numeroVenta} (intento ${
-            intentos + 1
+          `✅ Número de venta generado: ${numeroVenta} (intento ${intentos + 1
           })`
         );
         return numeroVenta;
@@ -342,7 +427,7 @@ const crearVenta = async (datosVenta, usuarioId) => {
       await detalle_ventas.create(
         {
           venta_id: nuevaVenta.id,
-          producto_id: item.producto_id,
+          producto_id: item.producto.id,
           cantidad: parseFloat(item.cantidad),
           precio_unitario: item.precio_unitario,
           subtotal: item.subtotal,
@@ -353,7 +438,7 @@ const crearVenta = async (datosVenta, usuarioId) => {
       // 2️⃣ ✅ NUEVO: Actualizar stock de forma atómica
       // Esto reemplaza el productos.update() anterior que NO era atómico
       const productoActualizado = await actualizarStockAtomico(
-        item.producto_id,
+        item.producto.id,
         parseFloat(item.cantidad),
         "salida", // tipo_movimiento
         transaction
@@ -362,7 +447,7 @@ const crearVenta = async (datosVenta, usuarioId) => {
       // 3️⃣ ✅ NUEVO: Registrar movimiento de forma centralizada
       await registrarMovimiento(
         {
-          producto_id: item.producto_id,
+          producto_id: item.producto.id,
           tipo_movimiento: "salida",
           cantidad: parseFloat(item.cantidad),
           stock_anterior: item.stock_actual, // Del validarProductosYStock
@@ -381,13 +466,13 @@ const crearVenta = async (datosVenta, usuarioId) => {
     // Log de auditoría de venta exitosa
     console.log(
       `✅ VENTA CREADA EXITOSAMENTE:\n` +
-        `   Número: ${numeroVenta}\n` +
-        `   ID: ${nuevaVenta.id}\n` +
-        `   Total: $${total.toFixed(2)}\n` +
-        `   Método: ${metodo_pago}\n` +
-        `   Productos: ${productosValidados.length}\n` +
-        `   Usuario: ${usuarioId}\n` +
-        `   Timestamp: ${new Date().toISOString()}`
+      `   Número: ${numeroVenta}\n` +
+      `   ID: ${nuevaVenta.id}\n` +
+      `   Total: $${total.toFixed(2)}\n` +
+      `   Método: ${metodo_pago}\n` +
+      `   Productos: ${productosValidados.length}\n` +
+      `   Usuario: ${usuarioId}\n` +
+      `   Timestamp: ${new Date().toISOString()}`
     );
 
     // Invalidar caché (cascada)
@@ -400,10 +485,10 @@ const crearVenta = async (datosVenta, usuarioId) => {
     if (error.message === "NO_SE_PUDO_GENERAR_NUMERO_VENTA_UNICO") {
       console.error(
         `🚨 ERROR CRÍTICO: No se pudo generar número de venta único\n` +
-          `   Usuario: ${usuarioId}\n` +
-          `   Productos: ${datosVenta.productos?.length || 0}\n` +
-          `   Timestamp: ${new Date().toISOString()}\n` +
-          `   Acción requerida: Verificar carga del sistema`
+        `   Usuario: ${usuarioId}\n` +
+        `   Productos: ${datosVenta.productos?.length || 0}\n` +
+        `   Timestamp: ${new Date().toISOString()}\n` +
+        `   Acción requerida: Verificar carga del sistema`
       );
 
       // Re-throw con mensaje más amigable
@@ -671,12 +756,12 @@ const testGeneracionConcurrenteNumeroVenta = async (numVentas = 100) => {
 
     console.log(
       `✅ TEST COMPLETADO:\n` +
-        `   Intentos: ${numVentas}\n` +
-        `   Exitosos: ${resultados.length}\n` +
-        `   Únicos: ${numerosGenerados.size}\n` +
-        `   Duplicados: ${duplicados}\n` +
-        `   Tiempo: ${duration}ms\n` +
-        `   Promedio: ${(duration / numVentas).toFixed(2)}ms/venta`
+      `   Intentos: ${numVentas}\n` +
+      `   Exitosos: ${resultados.length}\n` +
+      `   Únicos: ${numerosGenerados.size}\n` +
+      `   Duplicados: ${duplicados}\n` +
+      `   Tiempo: ${duration}ms\n` +
+      `   Promedio: ${(duration / numVentas).toFixed(2)}ms/venta`
     );
 
     return {
